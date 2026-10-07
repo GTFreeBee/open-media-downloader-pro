@@ -3,12 +3,13 @@ const ProgressBar = require("../types/ProgressBar");
 const Utils = require("../Utils");
 
 class DownloadQueryList {
-    constructor(videos, playlistMetadata, environment, manager, progressBar) {
+    constructor(videos, playlistMetadata, environment, manager, progressBar, callbacks = {}) {
         this.videos = videos;
         this.playlistMetadata = playlistMetadata;
         this.environment = environment;
         this.progressBar = progressBar;
         this.manager = manager;
+        this.callbacks = callbacks;
         this.length = this.videos.length;
         this.done = 0;
         this.cancelled = 0;
@@ -41,12 +42,15 @@ class DownloadQueryList {
                 }
                 video.setQuery(task);
                 video.query.connect().then((returnValue) => {
+                    if(this.callbacks.onItemResult != null) {
+                        this.callbacks.onItemResult(video, returnValue);
+                    }
                     if(video.parentID != null) {
                         const progress = this.parentProgress.find(e => e.id === video.parentID);
                         if(returnValue === "killed" || returnValue !== "done") progress.cancelled++;
                         progress.done++;
                         if (returnValue === "killed") this.cancelled++;
-                        if (returnValue !== "done") {
+                        if (returnValue !== "done" && returnValue !== "killed") {
                             video.error = true;
                             this.environment.errorHandler.checkError(returnValue, video.identifier);
                         }
@@ -57,14 +61,14 @@ class DownloadQueryList {
                         }
                     } else {
                         if (returnValue === "killed") this.cancelled++;
-                        if (returnValue !== "done") {
+                        if (returnValue !== "done" && returnValue !== "killed") {
                             video.error = true;
                             this.environment.errorHandler.checkError(returnValue, video.identifier);
                         }
                         this.done++;
                     }
                     this.progressBar.updatePlaylist(this.done - this.cancelled, this.length - this.cancelled);
-                    if(!video.error) {
+                    if(returnValue === "done" && !video.error) {
                         if(this.environment.settings.downloadJsonMetadata) this.manager.saveInfo(video, false);
                         video.downloaded = true;
                         video.query.progressBar.done(video.audioOnly);

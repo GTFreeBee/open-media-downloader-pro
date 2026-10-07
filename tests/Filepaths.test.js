@@ -71,6 +71,18 @@ describe('generate filepaths', () => {
        await instance.generateFilepaths();
        expect(instance.createFolder).toBeCalledTimes(1);
    });
+   it('stores packaged desktop settings in persistent user data', async () => {
+       const instance = instanceBuilder(true);
+       instance.platform = "win32";
+       instance.createFolder = jest.fn().mockResolvedValue(undefined);
+       instance.migrateFile = jest.fn().mockResolvedValue(undefined);
+
+       await instance.generateFilepaths();
+
+       expect(instance.settings).toBe(path.join("path/to/downloads", "userSettings"));
+       expect(instance.taskList).toBe(path.join("path/to/downloads", "taskList"));
+       expect(instance.migrateFile).toHaveBeenCalledTimes(2);
+   });
    it('calls create portable folder when this version is used', async () => {
        const instance = instanceBuilder(true, true);
        instance.platform = "win32portable";
@@ -95,7 +107,7 @@ describe('generate filepaths', () => {
 });
 
 describe('removeLeftOver', () => {
-    it('removes youtube-dl.exe on win32', async () => {
+    it('removes the legacy downloader executable on win32', async () => {
         Object.defineProperty(process, "platform", {
             value: "win32"
         });
@@ -109,7 +121,7 @@ describe('removeLeftOver', () => {
         expect(fs.promises.unlink).toBeCalledTimes(1);
         expect(fs.promises.unlink).toBeCalledWith(path.join("ffmpeg/path", "youtube-dl.exe"));
     });
-    it('removes youtube-dl-unix on other systems', async () => {
+    it('removes the legacy downloader executable on other systems', async () => {
         Object.defineProperty(process, "platform", {
             value: "darwin"
         });
@@ -133,3 +145,22 @@ function instanceBuilder(packaged, portable) {
     }
     return new Filepaths(app);
 }
+
+const originalFsFunctions = Object.getOwnPropertyDescriptors(fs);
+const originalFsPromiseFunctions = fs.promises ? Object.getOwnPropertyDescriptors(fs.promises) : null;
+afterAll(() => {
+    Object.defineProperties(fs, originalFsFunctions);
+    if(originalFsPromiseFunctions) Object.defineProperties(fs.promises, originalFsPromiseFunctions);
+});
+
+describe('persistent file migration', () => {
+    it('copies an existing legacy file only when the destination is missing', async () => {
+        const instance = instanceBuilder(true);
+        fs.promises.access = jest.fn().mockRejectedValue(Object.assign(new Error('missing'), {code: 'ENOENT'}));
+        fs.promises.copyFile = jest.fn().mockResolvedValue(undefined);
+
+        await instance.migrateFile('legacy/userSettings', 'current/userSettings');
+
+        expect(fs.promises.copyFile).toHaveBeenCalledWith('legacy/userSettings', 'current/userSettings', fs.constants.COPYFILE_EXCL);
+    });
+});

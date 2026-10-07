@@ -1,45 +1,31 @@
-const UserAgent = require('user-agents');
 const Query = require("../modules/types/Query");
 const execa = require('execa');
 const { PassThrough } = require('stream');
 
-jest.mock('user-agents');
 jest.mock('execa');
 
 beforeEach(() => {
     jest.clearAllMocks();
-    jest.doMock('execa', () => {
-        const originalModule = jest.requireActual('execa')
-        return {
-            __esModule: true,
-            ...originalModule,
-            execa: jest.fn()
-        }
-    });
 });
 
 describe('ytdl Query', () => {
     beforeEach(() => {
         execa.mockResolvedValue({stdout: "fake-data"});
     });
-    it('adds a random user agent when this setting is enabled', () => {
-        UserAgent.prototype.toString = jest.fn().mockReturnValue("agent");
+    it('uses downloader defaults for legacy spoof settings', () => {
         const errorHandlerMock = jest.fn();
         const instance = instanceBuilder("spoof", null, errorHandlerMock, "python");
         return instance.start("https://url.link", [], null).then(() => {
-            expect(UserAgent.prototype.toString).toBeCalledTimes(1);
-            expect(execa.mock.calls[0][1]).toContain("--user-agent");
-            expect(execa.mock.calls[0][1]).toContain("agent");
+            expect(execa.mock.calls[0][1]).not.toContain("--user-agent");
+
         });
     });
     it('adds an empty user agent when this setting is enabled', () => {
-        UserAgent.prototype.toString = jest.fn().mockReturnValue("agent");
         const errorHandlerMock = jest.fn();
         const instance = instanceBuilder("empty", null, errorHandlerMock, "python");
         return instance.start("https://url.link", [], null).then(() => {
-            expect(UserAgent.prototype.toString).toBeCalledTimes(0);
             expect(execa.mock.calls[0][1]).toContain("--user-agent");
-            expect(execa.mock.calls[0][1]).toContain("''");
+            expect(execa.mock.calls[0][1]).toContain("");
         });
     });
    it('adds the proxy when one is set', () => {
@@ -87,65 +73,116 @@ describe('ytdl Query', () => {
             expect(execa.mock.calls[0][1]).toContain("--no-cache-dir");
         });
     });
+    it('adds explicit yt-dlp JavaScript runtime arguments when available', () => {
+        const errorHandlerMock = jest.fn();
+        const instance = instanceBuilder("default", null, errorHandlerMock, "python", "", ["--js-runtimes", "deno:C:/runtime/deno.exe"]);
+        return instance.start("https://url.link", [], null).then(() => {
+            expect(execa.mock.calls[0][1]).toContain("--js-runtimes");
+            expect(execa.mock.calls[0][1]).toContain("deno:C:/runtime/deno.exe");
+        });
+    });
 })
 
 describe('Query with live callback', () => {
-    it('Stops with return value killed when stop() is called', async () => {
-        const [stdout, stderr, mock] = execaMockBuilder(true);
-        execa.mockReturnValue(mock)
-        const errorHandlerMock = jest.fn();
-        const callbackMock = jest.fn();
-        const instance = instanceBuilder("default", null, errorHandlerMock, "python");
-        const result = instance.start("https://url.link", [], callbackMock);
-        setTimeout(() => {
-            instance.stop();
-        }, 100);
-        await expect(result).resolves.toEqual("killed");
-        expect(callbackMock).toBeCalledWith("killed");
-    });
-    it('Checks the error when stderr gets written to', async () => {
-        const [stdout, stderr, mock] = execaMockBuilder(false);
-        execa.mockReturnValue(mock)
-        console.error = jest.fn();
-        const errorHandlerMock = jest.fn();
-        const callbackMock = jest.fn();
-        const instance = instanceBuilder("default", null, errorHandlerMock, "python");
-        const result = instance.start("https://url.link", [], callbackMock);
-        setTimeout(() => {
-            stderr.emit("data", "test-error");
-        }, 100);
-        setTimeout(() => {
-            stdout.emit("close");
-        }, 100);
-        await result;
-        expect(errorHandlerMock).toBeCalledWith("test-error", "test__id");
-    });
-    it('Resolves "done" when query was successful', async () => {
-        const [stdout, stderr, mock] = execaMockBuilder(false);
-        execa.mockReturnValue(mock)
-        const callbackMock = jest.fn();
+    it('buffers split JSON lines without rewriting escaped Unicode', async () => {
+        const [stdout, stderr, mock, reject, resolve] = execaMockBuilder();
+        execa.mockReturnValue(mock);
+        const callback = jest.fn();
         const instance = instanceBuilder("default", null, jest.fn(), "python");
-        const result = instance.start("https://url.link", [], callbackMock);
-        setTimeout(() => {
-            stdout.emit("close");
-        }, 100);
-        await expect(result).resolves.toEqual("done");
-        expect(callbackMock).toBeCalledWith("done");
+        const result = instance.start("https://url.link", [], callback);
+        await new Promise(setImmediate);
+        const line = '__OMDP_FILE__"C:\\\\music\\\\Title \\uFF5C \\u0022quote\\u0022.mp3"';
+        stdout.write(line.slice(0, 20));
+        stderr.write("WARNING: separate stream\n");
+        stdout.write(line.slice(20) + "\nlast line");
+        resolve({stdout: ""});
+        await result;
+        expect(callback).toHaveBeenCalledWith(line);
+        expect(callback).toHaveBeenCalledWith("last line");
+        expect(callback).toHaveBeenCalledWith("WARNING: separate stream");
     });
-    it('Sends live stdout to the callback', async () => {
-        const [stdout, stderr, mock] = execaMockBuilder(false);
+    it('cancels a metadata process that is already running', async () => {
+        const [stdout, stderr, mock, reject] = execaMockBuilder();
+        execa.mockReturnValue(mock);
+        const instance = instanceBuilder("default", null, jest.fn(), "python");
+        const result = instance.start("https://url.link", [], null);
+        await new Promise(setImmediate);
+        instance.stop();
+        reject(Object.assign(new Error("Cancelled"), {isCanceled: true}));
+        await expect(result).resolves.toBe("killed");
+        expect(mock.cancel).toHaveBeenCalled();
+    });
+    it('Stops with return value killed when stop() is called', async () => {
+        const [stdout, stderr, mock, reject] = execaMockBuilder();
         execa.mockReturnValue(mock);
         const callbackMock = jest.fn();
         const instance = instanceBuilder("default", null, jest.fn(), "python");
         const result = instance.start("https://url.link", [], callbackMock);
         setTimeout(() => {
-            stdout.emit("data", "test-data");
-            stdout.emit("data", "more-test-data");
-            stdout.emit("close");
+            instance.stop();
+            reject(Object.assign(new Error("Cancelled"), { isCanceled: true }));
+        }, 100);
+        await expect(result).resolves.toEqual("killed");
+        expect(callbackMock).toBeCalledWith("killed");
+    });
+    it('returns collected stderr when the process exits with an error', async () => {
+        const [stdout, stderr, mock, reject] = execaMockBuilder();
+        execa.mockReturnValue(mock);
+        console.error = jest.fn();
+        const callbackMock = jest.fn();
+        const instance = instanceBuilder("default", null, jest.fn(), "python");
+        const result = instance.start("https://url.link", [], callbackMock);
+        setTimeout(() => {
+            stderr.emit("data", "test-error");
+            reject(new Error("test-error"));
+        }, 100);
+        await expect(result).resolves.toEqual("test-error");
+        expect(callbackMock).toBeCalledWith("test-error");
+        expect(callbackMock).toBeCalledWith("killed");
+    });
+    it('Resolves "done" when query was successful', async () => {
+        const [stdout, stderr, mock, reject, resolve] = execaMockBuilder();
+        execa.mockReturnValue(mock);
+        const callbackMock = jest.fn();
+        const instance = instanceBuilder("default", null, jest.fn(), "python");
+        const result = instance.start("https://url.link", [], callbackMock);
+        setTimeout(() => {
+            resolve({stdout: ""});
+        }, 100);
+        await expect(result).resolves.toEqual("done");
+        expect(callbackMock).toBeCalledWith("done");
+    });
+    it('Sends live stdout to the callback', async () => {
+        const [stdout, stderr, mock, reject, resolve] = execaMockBuilder();
+        execa.mockReturnValue(mock);
+        const callbackMock = jest.fn();
+        const instance = instanceBuilder("default", null, jest.fn(), "python");
+        const result = instance.start("https://url.link", [], callbackMock);
+        setTimeout(() => {
+            stdout.emit("data", "test-data\n");
+            stdout.emit("data", "more-test-data\n");
+            resolve({stdout: ""});
         }, 100);
         await result;
         expect(callbackMock).toBeCalledWith("test-data");
         expect(callbackMock).toBeCalledWith("more-test-data");
+    });
+    it('does not fail early on retryable stderr if the process eventually succeeds', async () => {
+        const [stdout, stderr, mock, reject, resolve] = execaMockBuilder();
+        execa.mockReturnValue(mock);
+        const errorHandlerMock = jest.fn();
+        const callbackMock = jest.fn();
+        const instance = instanceBuilder("default", null, errorHandlerMock, "python");
+        const result = instance.start("https://url.link", [], callbackMock);
+        setTimeout(() => {
+            stderr.emit("data", "HTTP Error 429. Retrying fragment 1");
+            stdout.emit("data", "still-going");
+            resolve({stdout: ""});
+        }, 100);
+        await expect(result).resolves.toEqual("done");
+        expect(errorHandlerMock).not.toBeCalled();
+        expect(callbackMock).toBeCalledWith("still-going");
+        expect(callbackMock).toBeCalledWith("done");
     });
 });
 
@@ -172,15 +209,40 @@ describe('Query without callback', () => {
             expect(errorHandlerMock).toBeCalled();
         });
     });
+    it('Returns killed without reporting an error when a non-live query is cancelled', async () => {
+        execa.mockRejectedValue(Object.assign(new Error("Cancelled"), { isCanceled: true }));
+        const errorHandlerMock = jest.fn();
+        const instance = instanceBuilder("default", null, errorHandlerMock, "python");
+        instance.stop();
+        await expect(instance.start("https://url.link", [], null)).resolves.toEqual("killed");
+        expect(errorHandlerMock).not.toBeCalled();
+    });
 })
 
-function execaMockBuilder(killed) {
+function execaMockBuilder() {
     const stdout = new PassThrough();
     const stderr = new PassThrough();
-    const mock = {stdout: stdout, stderr: stderr, cancel: jest.fn(() => { stdout.emit("close") }), killed: killed}
-    return [stdout, stderr, mock];
+    let resolvePromise;
+    let rejectPromise;
+    const promise = new Promise((resolve, reject) => {
+        resolvePromise = resolve;
+        rejectPromise = reject;
+    });
+    promise.stdout = stdout;
+    promise.stderr = stderr;
+    promise.killed = false;
+    promise.cancel = jest.fn(() => {
+        promise.killed = true;
+    });
+    return [stdout, stderr, promise, rejectPromise, resolvePromise];
 }
 
-function instanceBuilder(userAgent, cookiePath, errorHandlerMock, pythonCommand, proxy) {
-    return new Query({pythonCommand: pythonCommand, errorHandler: {checkError: errorHandlerMock,  raiseUnhandledError: errorHandlerMock}, paths: {ytdl: "a/path/to/ytdl"}, settings: {cookiePath: cookiePath, userAgent, proxy: proxy}}, "test__id");
+function instanceBuilder(userAgent, cookiePath, errorHandlerMock, pythonCommand, proxy, runtimeArgs = []) {
+    return new Query({
+        pythonCommand: pythonCommand,
+        errorHandler: {checkError: errorHandlerMock,  raiseUnhandledError: errorHandlerMock},
+        getYtDlpRuntimeArgs: jest.fn().mockResolvedValue(runtimeArgs),
+        paths: {ytdl: "a/path/to/ytdl"},
+        settings: {cookiePath: cookiePath, userAgent, proxy: proxy}
+    }, "test__id");
 }

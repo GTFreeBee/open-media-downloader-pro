@@ -1,31 +1,33 @@
 name: CI
 on:
   push:
-    paths-ignore:
-      - '**/.github/ISSUE_TEMPLATE/**'
-      - '**/.github/FUNDING.yml'
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
-  lint:
+  verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-node@v2
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-      - name: Install npm modules
-        run: npm install
-      - name: Run ESLint
-        run: npm run lint
-  unit-test:
-    runs-on: ubuntu-latest
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run verify
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+  package-windows:
+    needs: verify
+    runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-node@v2
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-      - name: Install npm modules
-        run: npm install
-      - name: Run Jest
-        run: npm run test
-      - name: Upload coverage to codecov
-        uses: codecov/codecov-action@v1
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run build:dir

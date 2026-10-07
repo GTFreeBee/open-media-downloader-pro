@@ -55,3 +55,10 @@ function instanceBuilder() {
     const manager = { window: { webContents: { send: jest.fn() } }, getTaskList: jest.fn().mockResolvedValue(["url1", "url2"]), loadTaskList: jest.fn().mockResolvedValue("") }
     return new TaskList(paths, manager)
 }
+
+const originalFsFunctions = Object.getOwnPropertyDescriptors(fs);
+const originalFsPromiseFunctions = fs.promises ? Object.getOwnPropertyDescriptors(fs.promises) : null;
+afterAll(() => {
+    Object.defineProperties(fs, originalFsFunctions);
+    if(originalFsPromiseFunctions) Object.defineProperties(fs.promises, originalFsPromiseFunctions);
+});

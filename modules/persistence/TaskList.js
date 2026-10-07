@@ -7,12 +7,12 @@ class TaskList {
         this.data = null;
     }
 
-    async save() {
-        const taskList = this.manager.getTaskList();
+    async save(excludedUrls = []) {
+        const taskList = this.manager.getTaskList(excludedUrls);
         await fs.writeFile(this.paths.taskList, JSON.stringify(taskList))
     }
 
-    async load() {
+    async load(excludedUrls = []) {
         try {
             const res = await fs.readFile(this.paths.taskList)
             this.data = JSON.parse(res)
@@ -20,6 +20,7 @@ class TaskList {
             console.log("No tasks to restore.")
             return
         }
+        this.data = this.data.filter((url) => !excludedUrls.includes(url));
         if(this.data.length > 0) {
             const toastInfo = {
                 type: "task-list",

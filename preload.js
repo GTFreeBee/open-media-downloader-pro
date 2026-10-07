@@ -14,7 +14,6 @@ contextBridge.exposeInMainWorld(
                 "videoAction",
                 "cookieFile",
                 "downloadFolder",
-                "installUpdate",
                 "iconProgress",
                 "theme",
                 "restoreTaskList",
@@ -23,7 +22,9 @@ contextBridge.exposeInMainWorld(
                 "getSubtitles",
                 "getSelectedSubtitles",
                 "getLog",
-                "saveLog"
+                "saveLog",
+                "openDiagnosticsFolder",
+                "copyFailureReport"
             ];
             if (validChannels.includes(channel)) {
                 return await ipcRenderer.invoke(channel, data);

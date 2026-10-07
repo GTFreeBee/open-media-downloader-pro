@@ -1,4 +1,3 @@
-const axios = require("axios");
 const fs = require("fs");
 const path = require('path');
 const util = require('util');
@@ -6,7 +5,16 @@ const exec = util.promisify(require('child_process').exec);
 const os = require("os");
 const AdmZip = require("adm-zip");
 const Utils = require('./Utils');
-const {Agent} = require("https");
+const ResumableDownload = require("./ResumableDownload");
+const ArtifactVerifier = require("./ArtifactVerifier");
+const releaseManifest = require("./FfmpegReleaseManifest");
+
+function buildArtifact(entry) {
+    return {
+        url: ArtifactVerifier.assertHttpsUrl(releaseManifest.baseUrl + entry.file, ["github.com"]),
+        sha256: ArtifactVerifier.normalizeSha256(entry.sha256)
+    };
+}
 
 class FfmpegUpdater {
 
@@ -14,24 +22,30 @@ class FfmpegUpdater {
         this.paths = paths;
         this.win = win;
         this.action = "Installing";
+        this.blockingUi = true;
+        this.downloader = new ResumableDownload();
+        this.platform = process.platform;
+        this.arch = os.arch();
     }
 
     //Checks for an update and download it if there is.
-    async checkUpdate() {
+    async checkUpdate(options = {}) {
+        this.blockingUi = options.blockingUi !== false;
         if (await this.checkPreInstalled()) {
             console.log("FFmpeg and FFprobe already installed, skipping auto-install.")
-            return;
+            return false;
         }
         console.log("Checking for a new version of ffmpeg.");
+        const hasFallbackBinary = await this.hasUsableBinary();
         const localVersion = await this.getLocalVersion();
-        const { remoteFfmpegUrl, remoteFfprobeUrl, remoteVersion } = await this.getRemoteVersion();
+        const { ffmpeg, ffprobe, remoteVersion } = await this.getRemoteVersion();
         if(remoteVersion == null) {
             console.log("Unable to check for new updates, ffbinaries.com may be down.");
-            return;
+            return false;
         }
         if(remoteVersion === localVersion) {
             console.log(`ffmpeg was already up-to-date! Version: ${localVersion}`);
-            return;
+            return false;
         }
         if(localVersion == null) {
             console.log("Downloading missing ffmpeg binary.");
@@ -39,17 +53,26 @@ class FfmpegUpdater {
             console.log(`New version ${remoteVersion} found. Updating...`);
             this.action = "Updating to";
         }
-        this.win.webContents.send("binaryLock", {lock: true, placeholder: `Installing/Updating ffmpeg to version: ${remoteVersion}. Preparing...`})
-        await this.downloadUpdate(remoteFfmpegUrl, remoteVersion, "ffmpeg" + this.getFileExtension());
-        this.win.webContents.send("binaryLock", {lock: true, placeholder: `Installing/Updating ffprobe to version: ${remoteVersion}. Preparing...`})
-        await this.downloadUpdate(remoteFfprobeUrl, remoteVersion, "ffprobe" + this.getFileExtension());
-        await this.writeVersionInfo(remoteVersion);
+        try {
+            this.reportStatus(`Installing/Updating ffmpeg to version: ${remoteVersion}. Preparing...`);
+            await this.downloadUpdate(ffmpeg.url, ffmpeg.sha256, remoteVersion, "ffmpeg" + this.getFileExtension());
+            this.reportStatus(`Installing/Updating ffprobe to version: ${remoteVersion}. Preparing...`);
+            await this.downloadUpdate(ffprobe.url, ffprobe.sha256, remoteVersion, "ffprobe" + this.getFileExtension());
+            await this.writeVersionInfo(remoteVersion);
+            return true;
+        } catch (error) {
+            console.error(`ffmpeg update failed: ${error.message}`);
+            if (hasFallbackBinary) {
+                console.log("Continuing with the last working ffmpeg binaries.");
+            }
+            return false;
+        }
     }
 
     async checkPreInstalled() {
         try {
-            await exec("ffmpeg");
-            await exec("ffprobe");
+            await exec("ffmpeg -version");
+            await exec("ffprobe -version");
             return true;
         } catch (e) {
             return false;
@@ -58,18 +81,15 @@ class FfmpegUpdater {
 
     async getRemoteVersion() {
         try {
-            const httpsAgent = new Agent({
-                rejectUnauthorized: false
-            });
-            const res = await axios.get("https://ffbinaries.com/api/v1/version/latest", {httpsAgent});
-            let platform = "windows-64";
-            if (os.arch() === "x32" || os.arch() === "ia32") platform = "windows-32";
-            if (process.platform === "darwin") platform = "osx-64";
-            else if (process.platform === "linux") platform = "linux-32";
+            const platform = this.getManifestPlatform();
+            const release = releaseManifest.platforms[platform];
+            if (release == null) {
+                throw new Error(`No verified FFmpeg build is available for ${this.platform}/${this.arch}.`);
+            }
             return {
-                remoteVersion: res.data.version,
-                remoteFfmpegUrl: res.data.bin[platform].ffmpeg,
-                remoteFfprobeUrl: res.data.bin[platform].ffprobe,
+                remoteVersion: releaseManifest.version,
+                ffmpeg: buildArtifact(release.ffmpeg),
+                ffprobe: buildArtifact(release.ffprobe)
             }
         } catch (err) {
             console.error('An error occurred while retrieving the latest ffmpeg version data.')
@@ -78,9 +98,22 @@ class FfmpegUpdater {
             }
             return {
                 remoteVersion: null,
-                remoteFfmpegUrl: null,
-                remoteFfprobeUrl: null,
+                ffmpeg: null,
+                ffprobe: null,
             }
+        }
+    }
+
+    async hasUsableBinary() {
+        if (await this.checkPreInstalled()) {
+            return true;
+        }
+        try {
+            await fs.promises.access(path.join(this.paths.ffmpeg, "ffmpeg" + this.getFileExtension()));
+            await fs.promises.access(path.join(this.paths.ffmpeg, "ffprobe" + this.getFileExtension()));
+            return true;
+        } catch (error) {
+            return false;
         }
     }
 
@@ -88,10 +121,10 @@ class FfmpegUpdater {
    async getLocalVersion() {
         let data;
         try {
-            const result = await fs.promises.readFile(this.paths.ffmpegVersion);
+            const result = await fs.promises.readFile(this.paths.ffmpegVersion, "utf8");
             data = JSON.parse(result);
         } catch (err) {
-            console.error(err);
+            if (err.code !== "ENOENT") console.error(err);
             data = null;
         }
         try {
@@ -109,43 +142,39 @@ class FfmpegUpdater {
     }
 
     //Downloads the file at the given url and saves it to the ffmpeg path.
-    async downloadUpdate(url, version, filename) {
+    async downloadUpdate(url, expectedDigest, version, filename) {
+        ArtifactVerifier.assertHttpsUrl(url, ["github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"]);
         const downloadPath = path.join(this.paths.ffmpeg, "downloads");
-        if (!fs.existsSync(downloadPath)) {
-            fs.mkdirSync(downloadPath);
-        }
-        const writer = fs.createWriteStream(path.join(downloadPath, filename));
-
-        const httpsAgent = new Agent({
-            rejectUnauthorized: false
-        });
-        const { data, headers } = await axios.get(url, {responseType: 'stream', httpsAgent});
-        const totalLength = +headers['content-length'];
-        const total = Utils.convertBytes(totalLength);
-        const artifact = filename.replace(".exe", "");
-        let received = 0;
-        await new Promise((resolve, reject) => {
-            let error = null;
-            data.on('data', (chunk)  => {
-                received += chunk.length;
-                const percentage = ((received / totalLength) * 100).toFixed(0) + '%';
-                this.win.webContents.send("binaryLock", {lock: true, placeholder: `${this.action} ${artifact} ${version} - ${percentage} of ${total}`})
-            });
-            writer.on('error', err => {
-                error = err;
-                reject(err);
-            });
-            writer.on('close', async () => {
-                if (!error) {
-                    resolve(true);
+        const archivePath = path.join(downloadPath, filename + ".zip");
+        const stagingPath = path.join(downloadPath, "staging", filename);
+        if (!fs.existsSync(archivePath)) {
+            await this.downloader.download(url, archivePath, {
+                maxAttempts: 2,
+                onProgress: ({ transferred, total }) => {
+                    const artifact = filename.replace(".exe", "");
+                    const percentage = total == null ? "..." : ((transferred / total) * 100).toFixed(0) + "%";
+                    const totalText = total == null ? "unknown size" : Utils.convertBytes(total);
+                    this.reportStatus(`${this.action} ${artifact} ${version} - ${percentage} of ${totalText}`);
+                },
+                onRetry: ({ attempt, maxAttempts, error }) => {
+                    const artifact = filename.replace(".exe", "");
+                    this.reportStatus(`Retrying ${artifact} download (${attempt}/${maxAttempts}) after: ${error.message}`);
                 }
             });
-            data.pipe(writer);
-        });
-        this.win.webContents.send("binaryLock", {lock: true, placeholder: `${this.action} ${artifact} ${version} - Extracting binaries...`})
-        const zipFile = new AdmZip(path.join(downloadPath, filename), {});
-        zipFile.extractEntryTo(filename, this.paths.ffmpeg, false, true, false, filename);
-        fs.rmSync(path.join(this.paths.ffmpeg, "downloads"), { recursive: true, force: true });
+        } else {
+            console.log(`Reusing previously downloaded ${filename} archive.`);
+        }
+
+        await ArtifactVerifier.verifySha256(archivePath, expectedDigest);
+
+        const artifact = filename.replace(".exe", "");
+        this.reportStatus(`${this.action} ${artifact} ${version} - Extracting binaries...`);
+        await fs.promises.mkdir(path.dirname(stagingPath), { recursive: true });
+        const zipFile = new AdmZip(archivePath, {});
+        zipFile.extractEntryTo(filename, path.dirname(stagingPath), false, true, false, filename);
+        await ResumableDownload.promoteFile(stagingPath, path.join(this.paths.ffmpeg, filename));
+        await fs.promises.rm(archivePath, { force: true });
+        await fs.promises.rm(path.join(downloadPath, "staging"), { recursive: true, force: true });
     }
 
     //Writes the new version number to the ytdlVersion file
@@ -158,8 +187,24 @@ class FfmpegUpdater {
     }
 
     getFileExtension() {
-        if (process.platform === "win32") return ".exe";
+        if (this.platform === "win32") return ".exe";
         else return "";
+    }
+
+    getManifestPlatform() {
+        if (this.arch !== "x64") return null;
+        if (this.platform === "win32") return "windows-64";
+        if (this.platform === "darwin") return "osx-64";
+        if (this.platform === "linux") return "linux-64";
+        return null;
+    }
+
+    reportStatus(message) {
+        if (this.blockingUi && this.win != null) {
+            this.win.webContents.send("binaryLock", {lock: true, placeholder: message});
+        } else {
+            console.log(message);
+        }
     }
 }
 

@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest an idea for youtube-dl-gui
+about: Suggest an idea for Open Media Downloader Pro
 title: ''
 labels: 'feature request'
 assignees: ''

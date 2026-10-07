@@ -1,5 +1,6 @@
 const ErrorHandler = require("../modules/exceptions/ErrorHandler");
 const Utils = require("../modules/Utils");
+const errorDefinitions = require("../modules/exceptions/errorDefinitions.json");
 
 describe('raiseError', () => {
    it('does not raise an error if the video type is playlist', async () => {
@@ -64,6 +65,21 @@ describe('raiseUnhandledError', () => {
 });
 
 describe('checkError', () => {
+   it('recognises a bot check after warnings without losing other triggers', async () => {
+       const instance = await instanceBuilder();
+       instance.raiseError = jest.fn();
+       instance.checkError("WARNING: unable to extract data\nERROR: Sign in to confirm you’re not a bot", "id");
+       instance.checkError("ERROR: Sign in to confirm you're not a bot", "id");
+       expect(instance.raiseError).toHaveBeenCalledTimes(2);
+       expect(instance.raiseError.mock.calls[0][0].code).toBe("YouTube verification required");
+       expect(instance.raiseError.mock.calls[1][0].code).toBe("YouTube verification required");
+   });
+   it('accepts Error objects without throwing another exception', async () => {
+       const instance = await instanceBuilder();
+       instance.raiseUnhandledError = jest.fn();
+       expect(() => instance.checkError(new Error("ERROR: disk failed"), "id")).not.toThrow();
+       expect(instance.raiseUnhandledError).toHaveBeenCalledTimes(1);
+   });
    it('Raises an error if the message matches a trigger', async () => {
        const instance = await instanceBuilder();
        instance.raiseError = jest.fn();
@@ -96,6 +112,9 @@ async function instanceBuilder() {
         settings: {
             testSetting: true
         },
+        logger: {
+            persistFailure: jest.fn().mockResolvedValue(null)
+        },
         paths: {
             app: {
                 isPackaged: false
@@ -114,6 +133,6 @@ async function instanceBuilder() {
         onError: jest.fn()
     };
     const errorHandler = new ErrorHandler(win, queryManager, env);
-    errorHandler.errorDefinitions = await errorHandler.loadErrorDefinitions();
+    errorHandler.errorDefinitions = errorDefinitions;
     return errorHandler;
 }

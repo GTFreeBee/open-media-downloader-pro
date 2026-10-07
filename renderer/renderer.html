@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline'">
-    <title>Open Video Downloader</title>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: blob:; font-src 'self' data:; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
+    <title>Open Media Downloader Pro</title>
     <link rel="stylesheet" href="../node_modules/bootstrap/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="../node_modules/bootstrap-icons/font/bootstrap-icons.css">
     <link rel="stylesheet" href="lib/select2.min.css">
@@ -25,6 +25,26 @@
             <button id="settingsBtn" title="Settings" type="button" class="btn btn-dark"><i class="bi bi-gear"></i></button>
         </div>
     </form>
+</div>
+
+<div class="container mode-toolbar">
+    <div class="mode-panel">
+        <div class="mode-copy">
+            <p class="mode-eyebrow">Mode</p>
+            <p class="mode-title">Choose your default lane</p>
+            <p class="mode-subtitle" id="modeDefaultsSummary">Audio defaults to 320k MP3. Video defaults to 720p MP4.</p>
+        </div>
+        <div class="mode-toggle" role="tablist" aria-label="Download mode">
+            <button type="button" class="mode-option active" id="modeAudioBtn" data-mode="audio" aria-selected="true">
+                <span class="mode-option-title">Audio</span>
+                <span class="mode-option-subtitle" id="audioModeDefault">320k MP3</span>
+            </button>
+            <button type="button" class="mode-option" id="modeVideoBtn" data-mode="video" aria-selected="false">
+                <span class="mode-option-title">Video</span>
+                <span class="mode-option-subtitle" id="videoModeDefault">720p MP4</span>
+            </button>
+        </div>
+    </div>
 </div>
 
 <div class="container-fluid queue-area">
@@ -60,6 +80,13 @@
         <select title="Quality" id="download-quality" class="custom-select w-auto rounded" aria-label="Quality option for the whole queue">
             <option value="best" selected>Best</option>
             <option value="worst">Worst</option>
+            <option class="audio" value="320k">320k</option>
+            <option class="audio" value="256k">256k</option>
+            <option class="audio" value="224k">224k</option>
+            <option class="audio" value="192k">192k</option>
+            <option class="audio" value="160k">160k</option>
+            <option class="audio" value="128k">128k</option>
+            <option class="audio" value="96k">96k</option>
         </select>
         <span class="spacer"></span>
         <div class="dropdown dropup">
@@ -82,10 +109,20 @@
     <div class="row mx-auto">
         <div class="handle"><i class="bi bi-grip-vertical"></i></div>
         <div class="col-4">
-            <img class="mt-1" alt="Video thumbnail" nonce="imgErr" src="img/plain-placeholder.png" onerror="this.onerror=null;this.src='img/plain-placeholder.png';">
+            <img class="mt-1 media-thumbnail" alt="Video thumbnail" src="img/plain-placeholder.png">
         </div>
         <div class="col border-right border-dark">
             <p title="" class="card-title"></p>
+            <div class="filename-editor input-group input-group-sm mb-2 d-none">
+                <div class="input-group-prepend">
+                    <span class="input-group-text">Save as</span>
+                </div>
+                <input type="text" class="form-control filename-basename" aria-label="Filename without extension" title="Filename without extension">
+                <div class="input-group-append">
+                    <span class="input-group-text filename-extension">.auto</span>
+                    <button type="button" class="btn btn-dark filename-reset" title="Reset filename" aria-label="Reset filename"><i class="bi-arrow-counterclockwise"></i></button>
+                </div>
+            </div>
             <div class="row">
                 <div class="col-12">
                     <div class="progress mb-3">
@@ -166,7 +203,7 @@
                 <div class="container-fluid">
                     <div class="row mb-3">
                         <div class="thumb col-7">
-                            <img title="Click to download" src="img/plain-placeholder.png" onerror="this.onerror=null;this.src='img/plain-placeholder.png';" class="info-img" alt="thumbnail">
+                            <img title="Click to download" src="img/plain-placeholder.png" class="info-img media-thumbnail" alt="thumbnail">
                             <i title="Click to download" class="img-overlay bi bi-download"></i>
                         </div>
                         <div class="col-5">
@@ -237,6 +274,7 @@
                 </div>
             </div>
             <div class="modal-footer">
+                <button type="button" title="Copy failure report" class="btn report-copy btn-dark">Copy failure report</button>
                 <button type="button" title="Save as file" class="btn save btn-dark">Save as file</button>
                 <button type="button" class="btn btn-dark dismiss" >Close</button>
             </div>
@@ -258,7 +296,7 @@
                     <input type="file" class="custom-file-input" id="fileInput">
                     <label id="fileInputLabel" class="custom-file-label" for="fileInput">Click to select cookies.txt</label>
                 </div>
-                <a target="_blank" href="https://github.com/StefanLobbenmeier/youtube-dl-gui/wiki/Tutorial:-Private-videos-&-playlists">What is a cookies.txt file?</a>
+                <p class="mt-3 mb-0 text-muted">Use an exported cookies.txt file from your browser when a site requires sign-in.</p>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn removeCookies btn-dark">Remove cookies</button>
@@ -273,7 +311,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="settingsModalLabel">App settings</h5>
-                <a class="help-button" target="_blank" href="https://github.com/StefanLobbenmeier/youtube-dl-gui/wiki/Settings" title="Help for settings"><i class="bi bi-question-circle"></i></a>
+                <span class="help-button" title="Settings help is being refreshed for the rebrand"><i class="bi bi-question-circle"></i></span>
                 <button type="button" class="close dismiss" aria-label="Close">&times;</button>
             </div>
             <div class="modal-body">
@@ -312,6 +350,64 @@
                 </div>
 
                 <hr/>
+                <h3>Lane defaults</h3>
+                <p class="text-muted">Choose how Audio and Video lanes start. You can still change individual downloads in the queue.</p>
+                <div class="mb-3">
+                    <label for="defaultDownloadType" class="form-label">Startup lane</label>
+                    <select class="custom-select d-block rounded w-auto mb-2" id="defaultDownloadType">
+                        <option value="audio" selected>Audio</option>
+                        <option value="video">Video</option>
+                    </select>
+                </div>
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <h5>Audio</h5>
+                        <label for="audioDefaultQuality" class="form-label">Default quality</label>
+                        <select class="custom-select d-block rounded w-auto mb-2" id="audioDefaultQuality">
+                            <option value="best">Best available</option>
+                            <option value="320k" selected>320k</option>
+                            <option value="256k">256k</option>
+                            <option value="224k">224k</option>
+                            <option value="192k">192k</option>
+                            <option value="160k">160k</option>
+                            <option value="128k">128k</option>
+                            <option value="96k">96k</option>
+                            <option value="worst">Smallest available</option>
+                        </select>
+                        <label for="audioOutputFormat" class="form-label">Default format</label>
+                        <select class="custom-select d-block rounded w-auto mb-2" id="audioOutputFormat">
+                            <option value="none">Auto</option>
+                            <option value="mp3" selected>MP3</option>
+                            <option value="m4a">M4A</option>
+                            <option value="opus">Opus</option>
+                            <option value="vorbis">Vorbis</option>
+                            <option value="wav">WAV</option>
+                            <option value="aac">AAC</option>
+                            <option value="flac">FLAC</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <h5>Video</h5>
+                        <label for="videoDefaultQuality" class="form-label">Default quality</label>
+                        <select class="custom-select d-block rounded w-auto mb-2" id="videoDefaultQuality">
+                            <option value="best">Best available</option>
+                            <option value="2160p">2160p (4K)</option>
+                            <option value="1440p">1440p</option>
+                            <option value="1080p">1080p</option>
+                            <option value="720p" selected>720p</option>
+                            <option value="480p">480p</option>
+                            <option value="360p">360p</option>
+                            <option value="worst">Smallest available</option>
+                        </select>
+                        <label for="outputFormat" class="form-label">Default format</label>
+                        <select class="custom-select d-block rounded w-auto mb-2" id="outputFormat">
+                            <option value="none">Auto</option>
+                            <option value="mp4" selected>MP4</option>
+                            <option value="mkv">MKV</option>
+                        </select>
+                    </div>
+                </div>
+                <hr/>
                 <h3>Appearance</h3>
                 <div class="mb-4">
                     <label for="theme" class="form-label">Theme</label>
@@ -325,10 +421,6 @@
                 <div class="mb-1">
                     <input class="check-input" type="checkbox" value="" id="updateBinary">
                     <label class="check-label" for="updateBinary">Auto-update ytdl binary</label>
-                </div>
-                <div >
-                    <input class="check-input" type="checkbox" value="" id="updateApplication">
-                    <label class="check-label" for="updateApplication">Auto-update app</label>
                 </div>
                 <hr/>
                 <h3>Network</h3>
@@ -356,27 +448,6 @@
                 </div>
                 <hr/>
                 <h3>Output</h3>
-                <div class="mb-3">
-                    <label for="outputFormat" class="form-label">Attempt to use output format:</label>
-                    <select class="custom-select d-block rounded w-auto mb-2" id="outputFormat">
-                        <option value="none" selected>Auto</option>
-                        <option value="mp4">MP4</option>
-                        <option value="mkv">MKV</option>
-                    </select>
-                </div>
-                <div class="mb-3">
-                    <label for="audioOutputFormat" class="form-label">Force audio-only downloads to use output format:</label>
-                    <select class="custom-select d-block rounded w-auto mb-2" id="audioOutputFormat">
-                        <option value="none" selected>Auto</option>
-                        <option value="mp3">MP3</option>
-                        <option value="m4a">M4A</option>
-                        <option value="opus">Opus</option>
-                        <option value="vorbis">Vorbis</option>
-                        <option value="wav">WAV</option>
-                        <option value="aac">AAC</option>
-                        <option value="flac">FLAC</option>
-                    </select>
-                </div>
                 <div class="mb-1">
                     <label for="nameFormat" class="form-label">Filename format:</label>
                     <select class="custom-select d-block rounded w-auto mb-2" id="nameFormat">
@@ -451,14 +522,14 @@
                 <div class="mb-1">
                     <label class="check-label" for="userAgent">User Agent</label>
                     <select class="custom-select d-block rounded w-auto mb-2" id="userAgent">
-                        <option value="spoof" selected>Spoof</option>
+                        <option value="default" selected>Automatic (recommended)</option>
                         <option value="empty">Empty</option>
-                        <option value="default">Default</option>
+
                     </select>
                 </div>
                 <div class="mb-1">
                     <input class="check-input" type="checkbox" value="" id="validateCertificate">
-                    <label class="check-label" for="validateCertificate">Validate HTTPS certificates</label>
+                    <label class="check-label" for="validateCertificate">Validate HTTPS certificates (recommended)</label>
                 </div>
                 <div class="mb-1">
                     <input class="check-input" type="checkbox" value="" id="enableEncoding">
@@ -476,9 +547,40 @@
                 </div>
             </div>
             <div class="modal-footer">
-                <p id="version"></p>
+                <div class="mr-auto">
+                    <p id="version"></p>
+                    <button type="button" id="creditsBtn" class="btn btn-link p-0">Credits</button>
+                    <button type="button" id="diagnosticsBtn" class="btn btn-link p-0 ml-3">Open diagnostics folder</button>
+                </div>
                 <button type="button" class="btn dismiss btn-dark">Cancel</button>
                 <button type="button" class="btn apply btn-highlight">Apply</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="creditsModal" tabindex="-1" aria-labelledby="creditsModalLabel" aria-hidden="true">
+    <div class="modal-lg modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="creditsModalLabel">Credits</h5>
+                <button type="button" class="close dismiss" aria-label="Close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p><strong>Open Media Downloader Pro</strong> is maintained and rebranded by GlenTertainment.</p>
+                <p>This project is based on code from <a href="https://github.com/StefanLobbenmeier/youtube-dl-gui" target="_blank">StefanLobbenmeier/youtube-dl-gui</a>.</p>
+                <p>That project is itself derived from <a href="https://github.com/jely2002/youtube-dl-gui" target="_blank">jely2002/youtube-dl-gui</a>.</p>
+                <hr/>
+                <p class="mb-2"><strong>Core technologies</strong></p>
+                <ul class="mb-0 pl-3">
+                    <li><a href="https://www.electronjs.org/" target="_blank">Electron</a> and <a href="https://nodejs.org/" target="_blank">Node.js</a></li>
+                    <li><a href="https://github.com/yt-dlp/yt-dlp" target="_blank">yt-dlp</a> for media extraction and downloading</li>
+                    <li><a href="https://ffmpeg.org/" target="_blank">FFmpeg</a> for processing and muxing media</li>
+                    <li><a href="https://getbootstrap.com/" target="_blank">Bootstrap</a>, <a href="https://icons.getbootstrap.com/" target="_blank">Bootstrap Icons</a>, <a href="https://select2.org/" target="_blank">Select2</a>, and <a href="https://sortablejs.github.io/Sortable/" target="_blank">SortableJS</a> for the desktop UI</li>
+                </ul>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-dark dismiss">Close</button>
             </div>
         </div>
     </div>

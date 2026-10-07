@@ -1,70 +1,71 @@
-<img src="https://raw.githubusercontent.com/StefanLobbenmeier/youtube-dl-gui/v2.0.0/renderer/img/icon.png" alt="logo" align="left" height="100"/>
+# Open Media Downloader Pro
 
-# Open Video Downloader (youtube-dl-gui)
-[![version badge](https://img.shields.io/github/v/release/StefanLobbenmeier/youtube-dl-gui?label=latest-release)](https://github.com/StefanLobbenmeier/youtube-dl-gui/releases/latest)
-[![license](https://img.shields.io/github/license/StefanLobbenmeier/youtube-dl-gui)](https://github.com/StefanLobbenmeier/youtube-dl-gui/blob/master/LICENSE)
-[![coverage badge](https://img.shields.io/codecov/c/github/StefanLobbenmeier/youtube-dl-gui)](https://app.codecov.io/gh/StefanLobbenmeier/youtube-dl-gui)
-[![downloads](https://img.shields.io/github/downloads/StefanLobbenmeier/youtube-dl-gui/total)](https://github.com/StefanLobbenmeier/youtube-dl-gui/releases/latest)
-[![CI badge](https://img.shields.io/github/actions/workflow/status/StefanLobbenmeier/youtube-dl-gui/continuous-integration.yaml)](https://github.com/StefanLobbenmeier/youtube-dl-gui/actions)
+Open Media Downloader Pro is a desktop application for downloading media through a clear, queue-based workflow. It combines yt-dlp with a graphical interface, durable download recovery, verified tool updates, format controls, subtitles, metadata and diagnostics.
 
-https://github.com/StefanLobbenmeier/youtube-dl-gui
+## Highlights
 
-A cross-platform GUI for youtube-dl made in Electron and node.js
+- Audio-first and video-first modes with configurable startup, quality and format defaults
+- Multiple links, playlists and channels in one queue
+- Format, quality, codec, subtitle and output controls
+- Inline output filename editing with automatic extension handling
+- Interrupted-download journaling and automatic recovery
+- Bounded retries, per-site backoff and resumable transfers
+- Staged file promotion to reduce partial or false-success downloads
+- Local diagnostic logs and copyable failure reports
+- SHA-256 verification before managed tools are installed
 
+## Install
 
-### Features:
-- Download from all kind of platforms: YouTube, vimeo, twitter & many more
-- Download multiple videos/playlists/channels in one go
-- Select the resolution and format you want to download in
-- Download private videos (currently only tested on YouTube)
-- Multithreaded, up to 32 videos can be downloaded synchronously
-- Shows how much size the download will use up on your system
-- The app automatically keeps ytdl up-to-date
+Download the installer for your operating system from [GitHub Releases](../../releases). Every release includes `SHA256SUMS.txt`; verify the installer against that file before running it.
 
-Be sure to check out [a demo gif of the application](#Demo-gif)!
+On first launch the application may download yt-dlp, FFmpeg and a JavaScript runtime. These downloads use HTTPS and must match the SHA-256 value published in the selected upstream release metadata or the repository's pinned FFmpeg manifest.
 
-## How to use
-1. Download the [applicable installer or executable](https://github.com/StefanLobbenmeier/youtube-dl-gui/releases/latest) for your system.
-2. If you are on windows, make sure that the [Microsoft Visual C++ 2010 Redistributable Package (x86)](https://download.microsoft.com/download/1/6/5/165255E7-1014-4D0A-B094-B6A430A6BFFC/vcredist_x86.exe) is installed. 
-3. Paste a link into the box up top.
-4. Wait for the app to gather all required metadata.
-5. Press download, and the video(s) will get downloaded to your downloads folder.
+Windows may show a SmartScreen warning for unsigned community builds. A release should only be described as signed when its GitHub release notes and file properties identify a verified publisher.
 
-Want to know more about the features this app offers? Head over to the [wiki](https://github.com/StefanLobbenmeier/youtube-dl-gui/wiki/).
+## Use
 
-## Supporting the project
-I appreciate any help. That may include:
-- testing and raising issues if you encounter any
-- contributing via a pull request
-- donating to the project ([ko-fi](https://ko-fi.com/stefanlobbenmeier))
+1. Choose **Audio** or **Video** mode.
+2. Paste one or more supported web addresses.
+3. Review the queue and adjust quality, format or subtitles when needed.
+4. Choose a download folder and start the queue.
+5. Open **Diagnostics** from settings if a download repeatedly fails.
 
-## Something is not working!
-Please see if the answer is in the [frequently answered questions](https://github.com/StefanLobbenmeier/youtube-dl-gui/wiki/FAQ) or in the [wiki](https://github.com/StefanLobbenmeier/youtube-dl-gui/wiki/).
+Only download media you are legally allowed to access and retain. Website terms and local laws remain the user's responsibility.
 
-Still haven't found your answer? [Open up an issue](https://github.com/StefanLobbenmeier/youtube-dl-gui/issues), and describe the problem you're facing.
+## Privacy
 
-## Building from source
-First, clone the repository using `git clone https://github.com/StefanLobbenmeier/youtube-dl-gui.git`.
+The application has no project-owned analytics or advertising. URLs are sent to the selected sites and to the underlying media tools as required to inspect and download content. See [PRIVACY.md](PRIVACY.md) for details.
 
-Then navigate to the directory and install the npm modules by executing: `npm install`.
+## Supported systems
 
-The last step is to build using electron-builder [(documentation)](https://www.electron.build/cli). For example, the command to build a windows installer is: `npx electron-builder --win`. The output files can be found in the 'dist' folder.
+Release builds target current 64-bit Windows, macOS and Linux systems. Windows receives the most direct testing. Some sites require a current JavaScript runtime, cookies or account access supplied by the user.
 
-Please be aware that this app is only tested on windows, linux and macOS. If you decide to build for another platform/archtype it may or may not work. Builds other than those available in the releases come with absolutely no support.
+## Troubleshooting
 
-## Planned features
-- Select individual audio and video codecs (advanced mode)
-- List all audio qualities
-- Support for downloading livestreams
+- Update the application and retry the download before filing a report.
+- Check that the destination is writable and has enough free space.
+- Avoid placing active temporary downloads in a heavily synchronized folder.
+- Some sites temporarily rate-limit automated requests; allow the built-in backoff to finish.
+- Use **Copy failure report** to create a report with sensitive cookie values excluded.
 
-Feel free to [request a new feature](https://github.com/StefanLobbenmeier/youtube-dl-gui/issues).
+For further help, see [SUPPORT.md](SUPPORT.md). Please report security issues through the private process in [SECURITY.md](SECURITY.md).
 
-## Demo gif
-<img src="ytdlgui_demo.gif" alt="demo" width="500"/>  
+## Development
 
-## Credit
-Big thanks to the original author [jely2002](https://github.com/jely2002), who unfortunately stopped maintaining the original repository: https://github.com/jely2002/youtube-dl-gui
+Requires Node.js 22 and npm.
 
-## Liability & License notice
-Youtube-dl-gui and its maintainers cannot be held liable for misuse of this application, as stated in the [AGPL-3.0 license (section 16)](https://github.com/StefanLobbenmeier/youtube-dl-gui/blob/master/LICENSE).  
-The maintainers of youtube-dl-gui do not in any way condone the use of this application in practices that violate local laws such as but not limited to the DMCA. The maintainers of this application call upon the personal responsibility of its users to use this application in a fair way, as it is intended to be used.
+```text
+npm ci
+npm run verify
+npm start
+```
+
+Create a clean platform package with `npm run build:win`, `npm run build:linux` or `npm run build:mac`. Each build removes prior `dist` and coverage output first. Tests and development configuration remain in the source repository but are excluded from packaged applications.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for review requirements and [RELEASING.md](RELEASING.md) for the release checklist.
+
+## Credits and licensing
+
+This project is based on [StefanLobbenmeier/youtube-dl-gui](https://github.com/StefanLobbenmeier/youtube-dl-gui), which derives from [jely2002/youtube-dl-gui](https://github.com/jely2002/youtube-dl-gui).
+
+The application source is licensed under [AGPL-3.0-only](LICENSE). Components downloaded or redistributed by the application retain their own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

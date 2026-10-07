@@ -1,5 +1,19 @@
 [
   {
+    "code": "YouTube verification required",
+    "description": "YouTube is asking to verify this request. Wait before retrying. If it persists, use the Cookies setting with your own browser session.",
+    "trigger": [
+      "Sign in to confirm you’re not a bot",
+      "Sign in to confirm you're not a bot",
+      "Sign in to confirm you’re not a bot"
+    ]
+  },
+  {
+    "code": "Completed file could not be verified",
+    "description": "The downloader finished but its final file could not be confirmed. Any completed data has been retained. Open the diagnostics folder for details.",
+    "trigger": "final file could not be verified"
+  },
+  {
     "code": "No authentication/private",
     "description": "Authenticate using&nbsp;<span onclick=\"$('#authModal').modal('show');\" class=\"openAuth\">cookies</span>&nbsp;and try again.",
     "trigger": [
@@ -107,7 +121,7 @@
     "trigger": [
       "ERROR: Unable to extract yt initial data",
       "Did not get any data blocks"
-      ]
+    ]
   },
   {
     "code": "No write permission",
@@ -209,7 +223,7 @@
   },
   {
     "code": "Missing dependency",
-    "description": "Please install <a href=\"https://github.com/StefanLobbenmeier/youtube-dl-gui#how-to-use\" target=\"_blank\"> Microsoft Visual C++ 2010</a>",
+    "description": "Please install Microsoft Visual C++ 2010.",
     "trigger": "3221225781"
   },
   {

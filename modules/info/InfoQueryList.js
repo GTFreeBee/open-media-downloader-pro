@@ -10,10 +10,33 @@ class InfoQueryList {
         this.urls = null;
         this.length = null;
         this.done = 0;
+        this.cancelled = false;
+        this.tasks = [];
+        this.resolveStart = null;
+        this.startSettled = false;
+    }
+
+    cancel() {
+        this.cancelled = true;
+        for(const task of this.tasks) {
+            task.cancel();
+        }
+        this.finish([]);
+    }
+
+    finish(result) {
+        if(this.startSettled) {
+            return;
+        }
+        this.startSettled = true;
+        if(this.resolveStart != null) {
+            this.resolveStart(result);
+        }
     }
 
     async start() {
         return await new Promise(((resolve) => {
+            this.resolveStart = resolve;
             let totalMetadata = [];
             let playlistUrls = Utils.extractPlaylistUrls(this.query);
             for (const videoData of playlistUrls[1]) {
@@ -22,15 +45,31 @@ class InfoQueryList {
             }
             this.urls = playlistUrls[0];
             this.length = this.urls.length;
-            if (this.length === 0) resolve(totalMetadata);
+            if (this.cancelled) {
+                this.finish([]);
+                return;
+            }
+            if (this.length === 0) {
+                this.finish(totalMetadata);
+                return;
+            }
             if (this.urls === []) {
                 console.error("This playlist is empty.");
                 this.length = 0;
-                resolve(null);
+                this.finish(null);
+                return;
             }
             for (const url of this.urls) {
                 let task = new InfoQuery(url, this.progressBar.video.identifier, this.environment);
+                this.tasks.push(task);
                 task.connect().then((data) => {
+                    if(this.cancelled) {
+                        this.done++;
+                        if(this.done === this.length) {
+                            this.finish([]);
+                        }
+                        return;
+                    }
                     if (data.formats != null) {
                         let video = this.createVideo(data, url);
                         totalMetadata.push(video);
@@ -38,7 +77,7 @@ class InfoQueryList {
                     this.done++;
                     this.progressBar.updatePlaylist(this.done, this.length);
                     if (this.done === this.length) {
-                        resolve(totalMetadata);
+                        this.finish(totalMetadata);
                     }
                 });
             }

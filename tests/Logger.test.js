@@ -114,3 +114,10 @@ function instanceBuilder() {
     }
     return new Logger(environment);
 }
+
+const originalFsFunctions = Object.getOwnPropertyDescriptors(fs);
+const originalFsPromiseFunctions = fs.promises ? Object.getOwnPropertyDescriptors(fs.promises) : null;
+afterAll(() => {
+    Object.defineProperties(fs, originalFsFunctions);
+    if(originalFsPromiseFunctions) Object.defineProperties(fs.promises, originalFsPromiseFunctions);
+});

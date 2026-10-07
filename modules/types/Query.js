@@ -1,5 +1,4 @@
 const execa = require('execa');
-const UserAgent = require('user-agents');
 
 class Query {
     constructor(environment, identifier) {
@@ -7,6 +6,7 @@ class Query {
         this.identifier = identifier
         this.process = null;
         this.stopped = false;
+        this.lineBuffers = { stdout: "", stderr: "" };
     }
 
     stop() {
@@ -16,17 +16,21 @@ class Query {
         }
     }
 
+    cancel() {
+        this.stop();
+    }
+
     async start(url, args, cb) {
         if(this.stopped) return "killed";
         args.push("--no-cache-dir");
         args.push("--ignore-config");
+        args.push(...await this.environment.getYtDlpRuntimeArgs());
 
-        if(this.environment.settings.userAgent === "spoof") {
-            args.push("--user-agent"); //Add random user agent to slow down user agent profiling
-            args.push(new UserAgent({ deviceCategory: 'desktop' }).toString());
-        } else if(this.environment.settings.userAgent === "empty") {
+        args.push("--encoding", "utf-8", "--socket-timeout", "30");
+        if(this.stopped) return "killed";
+        if(this.environment.settings.userAgent === "empty") {
             args.push("--user-agent");
-            args.push("''"); //Add an empty user agent string to workaround VR video issues
+            args.push("");
         }
 
         if(this.environment.settings.proxy != null && this.environment.settings.proxy.length > 0) {
@@ -65,9 +69,13 @@ class Query {
         if(cb == null) {
             //Return the data after the query has completed fully.
             try {
-                const {stdout} = await execa(command, args);
+                this.process = execa(command, args, { windowsHide: true });
+                const {stdout} = await this.process;
                 return stdout
             } catch(e) {
+                if(this.stopped || e.isCanceled) {
+                    return "killed";
+                }
                 if(!this.environment.errorHandler.checkError(e.stderr, this.identifier)) {
                     if(!this.environment.errorHandler.checkError(e.shortMessage, this.identifier)) {
                         this.environment.errorHandler.raiseUnhandledError("Unhandled error (execa)", JSON.stringify(e, null, 2), this.identifier);
@@ -79,34 +87,61 @@ class Query {
             //Return data while the query is running (live)
             //Return "done" when the query has finished
             return await new Promise((resolve) => {
-                this.process = execa(command, args);
+                let settled = false;
+                let stderr = "";
+                this.lineBuffers = { stdout: "", stderr: "" };
+                this.process = execa(command, args, { windowsHide: true });
                 this.process.stdout.setEncoding('utf8');
+                this.process.stderr.setEncoding('utf8');
                 this.process.stdout.on('data', (data) => {
-                    const lines = data
-                        .toString()
-                        .replace(/\\u[0-9A-Fa-f]{4}/g, escapedUnicode => String.fromCharCode(parseInt(escapedUnicode.slice(2), 16)))
-                        .split("\n");
-                    for(const line of lines) {
-                        cb(line);
-                    }
+                    this.emitLiveLines(data, cb);
                 });
-                this.process.stdout.on('close', () => {
-                    if(this.process.killed) {
+                this.process.stderr.on("data", (data) => {
+                    const line = data.toString();
+                    stderr += line;
+                    this.emitLiveLines(line, cb, "stderr");
+                    console.error(line);
+                });
+                this.process.then(() => {
+                    if(settled) return;
+                    settled = true;
+                    this.flushLiveLines(cb);
+                    if(this.stopped || this.process.killed) {
                         cb("killed");
                         resolve("killed");
+                        return;
                     }
                     cb("done");
                     resolve("done");
-                });
-                this.process.stderr.on("data", (data) => {
-                    cb(data.toString());
-                    if(this.environment.errorHandler.checkError(data.toString(), this.identifier)) {
+                }).catch((error) => {
+                    if(settled) return;
+                    settled = true;
+                    this.flushLiveLines(cb);
+                    if(this.stopped || error.isCanceled || this.process.killed) {
                         cb("killed");
                         resolve("killed");
+                        return;
                     }
-                    console.error(data.toString())
-                })
+                    const errorOutput = stderr || error.all || error.stderr || error.shortMessage || "killed";
+                    cb("killed");
+                    resolve(errorOutput);
+                });
             });
+        }
+    }
+
+    emitLiveLines(data, cb, stream = "stdout") {
+        const lines = (this.lineBuffers[stream] + data.toString()).split(/\r\n|\n|\r/);
+        this.lineBuffers[stream] = lines.pop();
+        for(const line of lines) {
+            if(line.length > 0) cb(line);
+        }
+    }
+
+    flushLiveLines(cb) {
+        for(const stream of ["stdout", "stderr"]) {
+            if(this.lineBuffers[stream]) cb(this.lineBuffers[stream]);
+            this.lineBuffers[stream] = "";
         }
     }
 

@@ -4,6 +4,68 @@ let progressCooldown = [];
 let sizeCooldown = [];
 let sizeCache = [];
 let logUpdateTask;
+let pendingVideoDefaultQuality = false;
+
+const PLACEHOLDER_IMAGE = "img/plain-placeholder.png";
+
+function setLabeledText(element, label, value) {
+    $(element).empty().append($('<strong>').text(label)).append(document.createTextNode(String(value ?? "")));
+}
+
+function updateFilenameExtension(card, typeValue) {
+    const format = typeValue === "audio" ? window.settings.audioOutputFormat : window.settings.outputFormat;
+    $(card).find('.filename-extension').text(format === "none" ? ".auto" : `.${format}`);
+}
+
+async function normalizeFilenameEditor(card) {
+    const input = $(card).find('.filename-basename');
+    if(input.length === 0 || !input.is(':visible')) return null;
+    const original = input.data('default-basename');
+    const normalized = await window.main.invoke('videoAction', {action: 'normalizeFilename', value: input.val()});
+    if(normalized == null) {
+        input.val(original);
+        input.data('customized', false);
+        return null;
+    }
+    input.val(normalized);
+    const customized = normalized !== original;
+    input.data('customized', customized);
+    return customized ? normalized : null;
+}
+
+async function refreshFilenameSuggestion(card) {
+    const input = $(card).find('.filename-basename');
+    if(input.data('customized')) return;
+    const requestId = (input.data('suggestion-request') || 0) + 1;
+    input.data('suggestion-request', requestId);
+    const typeValue = $(card).find('.custom-select.download-type').val();
+    const qualityValue = $(card).find('.custom-select.download-quality').val();
+    const title = $(card).find('.card-title').prop('title');
+    let suggestion = input.data('metadata-basename') || title;
+    if(window.settings.nameFormatMode === "%(title).200s.%(ext)s") {
+        suggestion = title;
+    } else if(window.settings.nameFormatMode === "%(title).200s-(%(height)sp%(fps).0d).%(ext)s") {
+        suggestion = `${title.slice(0, 200)}-(${typeValue === "audio" ? "p" : qualityValue})`;
+    }
+    const normalized = await window.main.invoke('videoAction', {action: 'normalizeFilename', value: suggestion});
+    if(normalized != null && !input.data('customized') && input.data('suggestion-request') === requestId) {
+        input.val(normalized).data('default-basename', normalized);
+    }
+}
+
+function normalizeExternalUrl(value) {
+    try {
+        const url = new URL(String(value));
+        return ["https:", "http:"].includes(url.protocol) ? url.toString() : null;
+    } catch (error) {
+        return null;
+    }
+}
+
+function setThumbnail(element, value) {
+    const safeUrl = normalizeExternalUrl(value);
+    $(element).prop("src", safeUrl || PLACEHOLDER_IMAGE);
+}
 
 (function () { init(); })();
 
@@ -36,7 +98,6 @@ async function init() {
     //Updates the placeholder to a copied link
     window.main.receive("updateLinkPlaceholder", (args) => {
         $('#add-url').prop("placeholder", args.text);
-        $('#add-url').focus();
         linkCopied = args.copied;
     });
 
@@ -60,7 +121,9 @@ async function init() {
 
     //Init the when done dropdown
     $(document).ready(async function() {
-        console.log("hello");
+        $('.media-thumbnail').on('error', function() {
+            $(this).off('error').prop('src', PLACEHOLDER_IMAGE);
+        });
         $('.dropdown-toggle').dropdown();
         const availableOptions = await window.main.invoke('getDoneActions');
         for(const option of availableOptions) {
@@ -76,6 +139,8 @@ async function init() {
     //Set the selected theme (dark | light)
     const startupTheme = await window.main.invoke('theme');
     toggleWhiteMode(startupTheme);
+    await getSettings();
+    applyModeDefaults(window.settings.defaultDownloadType, {persist: false, syncCards: false});
 
     $('.video-cards').each(function() {
         let sel = this;
@@ -125,9 +190,7 @@ async function init() {
         verifyURL($('#add-url').val());
     });
 
-    $('body').on('click', '#install-btn', () => {
-        window.main.invoke("installUpdate");
-    }).on('click', '#tasklist-btn', () => {
+    $('body').on('click', '#tasklist-btn', () => {
         window.main.invoke("restoreTaskList");
     }).on('click', '.video-card .metadata.right button', function() {
         const card = $(this).closest('.video-card');
@@ -142,10 +205,20 @@ async function init() {
 
     $('#download-quality').on('change', () => updateAllVideoSettings());
 
-    $('#download-type').on('change', async () => {
+    $('#download-type').on('change', () => {
+        setModeToggleState(getModeFromType($('#download-type').val()));
+        syncGlobalQualityOptions($('#download-type').val());
+        if($('#download-type').val() === "audio" && !isAudioQualityValue($('#download-quality').val())) {
+            $('#download-quality').val(getPreferredAudioQualityValue($('#download-quality')));
+        } else if($('#download-type').val() !== "audio" && isAudioQualityValue($('#download-quality').val())) {
+            $('#download-quality').val(getPreferredVideoQualityValue($('#download-quality option.video').map((index, option) => option.value).get(), window.settings.videoDefaultQuality));
+        }
         updateAllVideoSettings();
-        await getSettings();
         sendSettings();
+    });
+
+    $('.mode-option').on('click', function() {
+        applyModeDefaults($(this).data('mode'));
     });
 
     $('#infoModal .img-overlay, #infoModal .info-img').on('click', () => {
@@ -162,6 +235,10 @@ async function init() {
 
     $('#authModal .dismiss').on('click', () => {
         $('#authModal').modal("hide");
+    });
+
+    $('#creditsModal .dismiss').on('click', () => {
+        $('#creditsModal').modal("hide");
     });
 
     $('#logModal .dismiss').on('click', () => {
@@ -188,10 +265,11 @@ async function init() {
     $('#settingsModal .apply').on('click', () => {
         $('#settingsModal').modal("hide");
         sendSettings();
+        applyModeDefaults(getModeFromType($('#download-type').val()), {persist: false});
     });
 
     $('#maxConcurrent').on('input', () => {
-        $('#concurrentLabel').html(`Max concurrent jobs <strong>(${$('#maxConcurrent').val()})</strong>`);
+        setLabeledText($('#concurrentLabel'), "Max concurrent jobs ", `(${$('#maxConcurrent').val()})`);
     })
 
     $('#nameFormat').on('change', function() {
@@ -208,9 +286,17 @@ async function init() {
         $('#settingsModal').modal("show");
     });
 
+    $('#creditsBtn').on('click', () => {
+        $('#creditsModal').modal("show");
+    });
+
+    $('#diagnosticsBtn').on('click', async () => {
+        await window.main.invoke('openDiagnosticsFolder');
+    });
+
     $('#defaultConcurrent').on('click', () => {
         window.main.invoke("settingsAction", {action: "get"}).then((settings) => {
-            $('#concurrentLabel').html(`Max concurrent jobs <strong>(${settings.defaultConcurrent})</strong>`);
+            setLabeledText($('#concurrentLabel'), "Max concurrent jobs ", `(${settings.defaultConcurrent})`);
             $('#maxConcurrent').val(settings.defaultConcurrent);
         });
     })
@@ -223,7 +309,7 @@ async function init() {
         event.preventDefault();
         window.main.invoke('cookieFile', false).then((path) => {
             if(path != null)  {
-                $('#fileInputLabel').html(path);
+                $('#fileInputLabel').text(path);
                 $('#fileInput').attr("title", path);
             }
         });
@@ -231,7 +317,7 @@ async function init() {
 
     window.main.invoke('cookieFile', "get").then((path) => {
         if(path != null) {
-            $('#fileInputLabel').html(path);
+            $('#fileInputLabel').text(path);
             $('#fileInput').attr("title", path);
         }
     });
@@ -243,11 +329,20 @@ async function init() {
     })
 
     $('#infoModal .json').on('click', () => {
-        window.main.invoke('videoAction', {action: "downloadInfo", identifier: $('#infoModal .identifier').html()});
+        window.main.invoke('videoAction', {action: "downloadInfo", identifier: $('#infoModal .identifier').text()});
     });
 
     $('#logModal .save').on('click', () => {
-        window.main.invoke('saveLog', $('#logModal .identifier').html());
+        window.main.invoke('saveLog', $('#logModal .identifier').text());
+    });
+
+    $('#logModal .report-copy').on('click', async () => {
+        await window.main.invoke('copyFailureReport', $('#logModal .identifier').text());
+        showToast({
+            type: "update",
+            title: "Failure report copied",
+            body: "A detailed failure report has been copied to your clipboard."
+        });
     });
 
     $('#clearBtn').on('click', () => {
@@ -293,6 +388,7 @@ async function init() {
                         encoding: $(card).find('.custom-select.download-encoding').val(),
                         audioEncoding: $(card).find('.custom-select.download-audio-encoding').val(),
                         type: $(card).find('.custom-select.download-type').val(),
+                        filenameOverride: await normalizeFilenameEditor(card),
                         downloadSubs: !$(card).find('.subtitle-btn i').hasClass("bi-card-text-strike")
                     })
                 } else {
@@ -302,6 +398,7 @@ async function init() {
                         encoding: $(card).find('.custom-select.download-encoding').val(),
                         audioEncoding: $(card).find('.custom-select.download-audio-encoding').val(),
                         type: $(card).find('.custom-select.download-type').val(),
+                        filenameOverride: await normalizeFilenameEditor(card),
                         downloadSubs: !$(card).find('.subtitle-btn i').hasClass("bi-card-text-strike")
                     })
                 }
@@ -330,7 +427,7 @@ async function init() {
         updateGlobalDownloadQuality();
         $('#totalProgress .progress-bar').remove();
         $('#totalProgress').prepend('<div class="progress-bar" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>')
-        $('#totalProgress small').html(`Downloading - item 0 of ${videos.length} completed`);
+        $('#totalProgress small').text(`Downloading - item 0 of ${videos.length} completed`);
     });
 
     //Enables the main process to show logs/errors in the renderer dev console
@@ -388,8 +485,7 @@ async function init() {
                 setUnifiedPlaylist(arg);
                 break;
             case "setDownloadType":
-                $('#download-type').val(arg.type);
-                updateAllVideoSettings();
+                applyModeDefaults(getModeFromType(arg.type), {persist: false});
                 break;
         }
     });
@@ -446,10 +542,10 @@ function parseURL(data) {
 
 function showToast(toastInfo) {
     if(toastInfo.title != null) {
-        $(`.${toastInfo.type}-title`).html(toastInfo.title);
+        $(`.${toastInfo.type}-title`).text(toastInfo.title);
     }
     if(toastInfo.body != null) {
-        $(`.${toastInfo.type}-body`).html(toastInfo.body);
+        $(`.${toastInfo.type}-body`).text(toastInfo.body);
     }
     if($(`#${toastInfo.type}`).is(':visible')) $(`#${toastInfo.type}`).toast('show').css('visibility', 'visible');
 }
@@ -491,6 +587,18 @@ function updateGlobalDownloadQuality() {
             $(option).addClass("video");
         }
     }
+    syncGlobalQualityOptions($('#download-type').val());
+    if(pendingVideoDefaultQuality && $('#download-type').val() !== "audio" && sortedFormats.length > 0) {
+        $('#download-quality').val(getPreferredGlobalQuality("video"));
+        pendingVideoDefaultQuality = false;
+    }
+    if($('#download-type').val() === "audio") {
+        if(!isAudioQualityValue($('#download-quality').val())) {
+            $('#download-quality').val(getPreferredGlobalQuality("audio"));
+        }
+    } else if(isAudioQualityValue($('#download-quality').val()) && $('#download-quality').val() !== "best" && $('#download-quality').val() !== "worst") {
+        $('#download-quality').val(getPreferredGlobalQuality("video"));
+    }
 }
 
 function parseFormatString(string) {
@@ -504,6 +612,110 @@ function parseFormatString(string) {
     };
 }
 
+function getModeFromType(typeValue) {
+    return typeValue === "audio" ? "audio" : "video";
+}
+
+function setModeToggleState(mode) {
+    $('.mode-option').each(function() {
+        const isActive = $(this).data('mode') === mode;
+        $(this).toggleClass('active', isActive).attr('aria-selected', isActive);
+    });
+}
+
+function isAudioQualityValue(value) {
+    return ["best", "worst", "320k", "256k", "224k", "192k", "160k", "128k", "96k"].includes(value);
+}
+
+function getPreferredAudioQualityValue(selectableRoot, targetValue = "320k") {
+    const options = $(selectableRoot).find('option').map((index, option) => option.value).get();
+    if(options.includes(targetValue)) {
+        return targetValue;
+    }
+    if(options.includes("best")) {
+        return "best";
+    }
+    return options[0];
+}
+
+function getPreferredVideoQualityValue(formatValues, targetValue = "720p") {
+    if(formatValues.length === 0) {
+        return targetValue === "worst" ? "worst" : "best";
+    }
+    if(targetValue === "best") {
+        return formatValues[0];
+    }
+    if(targetValue === "worst") {
+        return formatValues[formatValues.length - 1];
+    }
+    const target = parseFormatString(targetValue);
+    return formatValues.reduce((previous, current) => {
+        const parsedPrevious = parseFormatString(previous);
+        const parsedCurrent = parseFormatString(current);
+        const previousDistance = Math.abs(parseInt(parsedPrevious.height, 10) - parseInt(target.height, 10));
+        const currentDistance = Math.abs(parseInt(parsedCurrent.height, 10) - parseInt(target.height, 10));
+        if(currentDistance === previousDistance) {
+            return parseInt(parsedCurrent.height, 10) > parseInt(parsedPrevious.height, 10) ? current : previous;
+        }
+        return currentDistance < previousDistance ? current : previous;
+    });
+}
+
+function syncGlobalQualityOptions(typeValue) {
+    const isAudio = typeValue === "audio";
+    $('#download-quality option.audio').toggle(isAudio);
+    $('#download-quality option.video').toggle(!isAudio);
+}
+
+function getPreferredQualityForCard(card, typeValue, fallbackVideoValue = "720p") {
+    if(typeValue === "audio") {
+        return getPreferredAudioQualityValue($(card).find('.custom-select.download-quality'), window.settings.audioDefaultQuality);
+    }
+    const availableFormats = $(card).find('.custom-select.download-quality option.video').map((index, option) => option.value).get();
+    return getPreferredVideoQualityValue(availableFormats, fallbackVideoValue);
+}
+
+function getPreferredGlobalQuality(typeValue) {
+    if(typeValue === "audio") {
+        return getPreferredAudioQualityValue($('#download-quality'), window.settings.audioDefaultQuality);
+    }
+    const globalFormats = $('#download-quality option.video').map((index, option) => option.value).get();
+    return getPreferredVideoQualityValue(globalFormats, window.settings.videoDefaultQuality);
+}
+
+function getSettingLabel(selector, value) {
+    return $(selector).find(`option[value="${value}"]`).text() || value;
+}
+
+function updateModeDefaultLabels(settings) {
+    const audioQuality = getSettingLabel('#audioDefaultQuality', settings.audioDefaultQuality);
+    const audioFormat = getSettingLabel('#audioOutputFormat', settings.audioOutputFormat);
+    const videoQuality = getSettingLabel('#videoDefaultQuality', settings.videoDefaultQuality);
+    const videoFormat = getSettingLabel('#outputFormat', settings.outputFormat);
+    $('#audioModeDefault').text(`${audioQuality} ${audioFormat}`);
+    $('#videoModeDefault').text(`${videoQuality} ${videoFormat}`);
+    $('#modeDefaultsSummary').text(`Audio defaults to ${audioQuality} ${audioFormat}. Video defaults to ${videoQuality} ${videoFormat}.`);
+}
+
+function applyModeDefaults(mode, options = {}) {
+    const settings = {
+        persist: options.persist !== false,
+        syncCards: options.syncCards !== false
+    };
+    const typeValue = mode === "audio" ? "audio" : "video";
+    setModeToggleState(mode);
+    $('#download-type').val(typeValue);
+    syncGlobalQualityOptions(typeValue);
+    $('#download-quality').val(getPreferredGlobalQuality(typeValue));
+    pendingVideoDefaultQuality = mode === "video" && !["best", "worst"].includes(window.settings.videoDefaultQuality);
+    if(settings.syncCards) {
+        updateAllVideoSettings();
+    }
+    if(settings.persist) {
+        sendSettings();
+    }
+}
+
 async function addVideo(args) {
     await getSettings();
     let template = $('.template.video-card').clone();
@@ -511,17 +723,30 @@ async function addVideo(args) {
     $(template).prop('id', args.identifier);
     if(args.type === "single") {
         $(template).find('.card-title')
-            .html(args.title)
+            .text(args.title)
             .prop('title', args.title);
+        const filenameInput = $(template).find('.filename-basename');
+        filenameInput
+            .val(args.filenameBase)
+            .data('default-basename', args.filenameBase)
+            .data('metadata-basename', args.filenameBase)
+            .data('customized', false)
+            .on('input', function() { $(this).data('customized', true); })
+            .on('change', () => normalizeFilenameEditor(template));
+        $(template).find('.filename-editor').removeClass('d-none');
+        $(template).find('.filename-reset').on('click', () => {
+            filenameInput.data('customized', false);
+            refreshFilenameSuggestion(template);
+        });
         $(template).find('.progress-bar')
             .addClass('progress-bar-striped')
             .addClass('progress-bar-animated')
             .width("100%");
         if(args.subtitles) $(template).find('.subtitle-btn i').removeClass("bi-card-text-strike").addClass("bi-card-text").attr("title", "Subtitles enabled");
-        $(template).find('img').prop("src", args.thumbnail);
+        setThumbnail($(template).find('img'), args.thumbnail);
         $(template).find('.info').addClass("d-none");
         $(template).find('.progress small').html("Setting up environment")
-        $(template).find('.metadata.left').html('<strong>Duration: </strong>' + ((args.duration == null) ? "Unknown" : args.duration));
+        setLabeledText($(template).find('.metadata.left'), "Duration: ", args.duration == null ? "Unknown" : args.duration);
         if(window.settings.enableEncoding) {
             $(template).find('.metadata').hide();
         } else {
@@ -537,8 +762,11 @@ async function addVideo(args) {
         }
 
         $(template).find('.custom-select.download-type').on('change', function () {
-            let isAudio = this.selectedOptions[0].value === "audio";
-            disableEncodingDropdowns(this.selectedOptions[0].value, template);
+            const selectedType = this.selectedOptions[0].value;
+            updateFilenameExtension(template, selectedType);
+            refreshFilenameSuggestion(template);
+            let isAudio = selectedType === "audio";
+            disableEncodingDropdowns(selectedType, template);
             for(const elem of $(template).find('option')) {
                 if($(elem).hasClass("video")) {
                     $(elem).toggle(!isAudio)
@@ -547,7 +775,9 @@ async function addVideo(args) {
                 }
             }
             if (args.formats.length > 0) {
-                $(template).find('.custom-select.download-quality').val(isAudio ? "best" : args.formats[args.selected_format_index].display_name).change();
+                $(template).find('.custom-select.download-quality')
+                    .val(getPreferredQualityForCard(template, selectedType, window.settings.videoDefaultQuality))
+                    .change();
             }
         });
 
@@ -561,6 +791,7 @@ async function addVideo(args) {
 
         $(template).find('.custom-select.download-quality').on('change', function () {
             updateCodecs(template, this.value);
+            refreshFilenameSuggestion(template);
         });
 
         $(template).find('.custom-select.download-type').change();
@@ -576,7 +807,7 @@ async function addVideo(args) {
 
         $(template).find('.remove-btn').on('click', () => removeVideo(getCard(args.identifier)));
 
-        $(template).find('.download-btn').on('click', () => {
+        $(template).find('.download-btn').on('click', async () => {
             let downloadArgs = {
                 action: "download",
                 url: args.url,
@@ -585,7 +816,8 @@ async function addVideo(args) {
                 encoding: $(template).find('.custom-select.download-encoding').val(),
                 audioEncoding: $(template).find('.custom-select.download-audio-encoding').val(),
                 type: $(template).find('.custom-select.download-type').val(),
-                downloadType: "single"
+                downloadType: "single",
+                filenameOverride: await normalizeFilenameEditor(template)
             }
             window.main.invoke("videoAction", downloadArgs)
             $('#downloadBtn, #clearBtn').prop("disabled", true);
@@ -618,7 +850,7 @@ async function addVideo(args) {
 
     } else if(args.type === "metadata") {
         $(template).find('.card-title')
-            .html(args.url)
+            .text(args.url)
             .prop('title', args.url);
         $(template).find('.progress-bar')
             .addClass('progress-bar-striped')
@@ -629,11 +861,12 @@ async function addVideo(args) {
         $(template).find('.options').addClass("d-none");
         $(template).find('.metadata.info').html('Downloading metadata...');
         $(template).find('.buttons').children().each(function() { $(this).find('i').addClass("disabled"); $(this).addClass("disabled"); });
+        $(template).find('.remove-btn, .remove-btn i').removeClass("disabled");
         $(template).find('.remove-btn').on('click', () => removeVideo(getCard(args.identifier)));
 
     } else if(args.type === "playlist") {
         $(template).find('.card-title')
-            .html(args.url)
+            .text(args.url)
             .prop('title', args.url);
         $(template).find('.progress small')
             .html('Setting up environment')
@@ -646,6 +879,7 @@ async function addVideo(args) {
         $(template).find('.options').addClass("d-none");
         $(template).find('.metadata.info').html('Fetching video metadata...');
         $(template).find('.buttons').children().each(function() { $(this).find('i').addClass("disabled"); $(this).addClass("disabled"); });
+        $(template).find('.remove-btn, .remove-btn i').removeClass("disabled");
         $(template).find('.remove-btn').on('click', () => removeVideo(getCard(args.identifier)));
     }
 
@@ -653,7 +887,10 @@ async function addVideo(args) {
         $(template).find('img').on('load error', () => resolve());
     }).then(() => {
         $('.video-cards').prepend(template);
-        if(args.type === "single") updateVideoSettings(args.identifier);
+        if(args.type === "single") {
+            updateGlobalDownloadQuality();
+            updateVideoSettings(args.identifier);
+        }
     });
 
 }
@@ -674,21 +911,21 @@ async function setUnifiedPlaylist(args) {
     await getSettings();
     const card = getCard(args.identifier);
     $(card).addClass("unified");
-    $(card).append(`<input type="hidden" class="url" value="${args.url}">`);
+    $(card).append($('<input>', {type: 'hidden', class: 'url'}).val(args.url));
     $(card).find('.progress').addClass("d-none").removeClass("d-flex");
     $(card).find('.options').addClass("d-flex");
     $(card).find('.info').addClass("d-none").removeClass("d-flex");
-    $(card).find('.metadata.right').html('<strong>Playlist size: </strong>' + args.length);
-    $(card).find('.metadata.left').html('<strong>Uploader: </strong>' + (args.uploader == null ? "Unknown" : args.uploader));
+    setLabeledText($(card).find('.metadata.right'), "Playlist size: ", args.length);
+    setLabeledText($(card).find('.metadata.left'), "Uploader: ", args.uploader == null ? "Unknown" : args.uploader);
     if(window.settings.enableEncoding) {
         $(card).find('.metadata').hide();
     } else {
         $(card).find('.custom-select.download-encoding, .custom-select.download-audio-encoding').hide();
     }
     if(args.subtitles) $(card).find('.subtitle-btn i').removeClass("bi-card-text-strike").addClass("bi-card-text").attr("title", "Subtitles enabled");
-    $(card).find('img').prop("src", args.thumb);
+    setThumbnail($(card).find('img'), args.thumb);
     $(card).find('.card-title')
-        .html(args.title)
+        .text(args.title)
         .prop('title', args.title);
     $(card).find('.progress-bar')
         .addClass('progress-bar-striped')
@@ -703,8 +940,9 @@ async function setUnifiedPlaylist(args) {
     });
 
     $(card).find('.custom-select.download-type').on('change', function () {
-        disableEncodingDropdowns(this.selectedOptions[0].value, card);
-        let isAudio = this.selectedOptions[0].value === "audio";
+        const selectedType = this.selectedOptions[0].value;
+        disableEncodingDropdowns(selectedType, card);
+        let isAudio = selectedType === "audio";
         for(const elem of $(card).find('option')) {
             if($(elem).hasClass("video")) {
                 $(elem).toggle(!isAudio)
@@ -712,7 +950,9 @@ async function setUnifiedPlaylist(args) {
                 $(elem).toggle(isAudio)
             }
         }
-        $(card).find('.custom-select.download-quality').val(isAudio ? "best" : args.formats[0].display_name).change();
+        $(card).find('.custom-select.download-quality')
+            .val(getPreferredQualityForCard(card, selectedType, window.settings.videoDefaultQuality))
+            .change();
     });
 
     $(card).find('.download-btn').on('click', () => {
@@ -747,6 +987,7 @@ async function setUnifiedPlaylist(args) {
     $(card).find('.open .folder').on('click', () => {
         window.main.invoke("videoAction", {action: "open", identifier: args.identifier, type: "folder"});
     });
+    updateGlobalDownloadQuality();
     updateVideoSettings(args.identifier);
 }
 
@@ -801,7 +1042,7 @@ function updateProgress(args) {
         return;
     }
     if(args.progress.initial != null && args.progress.initial) {
-        $(card).find('.progress small').html(args.progress.message);
+        $(card).find('.progress small').text(args.progress.message);
         return;
     }
     if(args.progress.finished != null && args.progress.finished) {
@@ -831,7 +1072,7 @@ function updateProgress(args) {
             resetProgress($(card).find('.progress-bar')[0], card);
         }
         $(card).find('.progress-bar').attr('aria-valuenow', args.progress.percentage.slice(0,-1)).css('width', args.progress.percentage);
-        $(card).find('.progress small').html(`${args.progress.percentage} - ${args.progress.done} of ${args.progress.total} `);
+        $(card).find('.progress small').text(`${args.progress.percentage} - ${args.progress.done} of ${args.progress.total} `);
     } else if(args.progress.percentage != null) {
         $(card).find('.progress-bar').attr('aria-valuenow', args.progress.percentage.slice(0,-1)).css('width', args.progress.percentage);
         if(args.progress.percentage === "100.0%") {
@@ -843,8 +1084,9 @@ function updateProgress(args) {
         }
         if(!progressCooldown.includes(args.identifier)) {
             progressCooldown.push(args.identifier);
-            $(card).find('.metadata.right').html('<strong>ETA: </strong>' + args.progress.eta).show();
-            $(card).find('.metadata.left').html('<strong>Speed: </strong>' + args.progress.speed).show();
+            setLabeledText($(card).find('.metadata.right'), "ETA: ", args.progress.eta);
+            setLabeledText($(card).find('.metadata.left'), "Speed: ", args.progress.speed);
+            $(card).find('.metadata.right, .metadata.left').show();
             setTimeout(() => {
                 progressCooldown = progressCooldown.filter(item => item !== args.identifier);
             }, 200);
@@ -857,7 +1099,7 @@ function updateTotalProgress(args) {
         resetTotalProgress();
         return;
     }
-    $('#totalProgress small').html(`Downloading - item ${args.progress.done} of ${args.progress.total} completed`);
+    $('#totalProgress small').text(`Downloading - item ${args.progress.done} of ${args.progress.total} completed`);
     $('#totalProgress .progress-bar').css("width", args.progress.percentage).attr("aria-valuenow", args.progress.percentage.slice(0,-1));
     const ratio = parseFloat(args.progress.percentage.slice(0,-1));
     window.main.invoke("iconProgress", ratio / 100);
@@ -908,39 +1150,11 @@ async function updateVideoSettings(identifier) {
     const card = getCard(identifier);
     const qualityValue = $('#download-quality').val();
     const typeValue = $('#download-type').val();
-    const oldQuality = $(card).find('.custom-select.download-quality');
+    const oldQuality = $(card).find('.custom-select.download-quality').val();
     const oldType = $(card).find('.custom-select.download-type').val();
     $(card).find('.custom-select.download-type').val(typeValue);
-    const classValue = typeValue === "videoOnly" ? "video" : typeValue;
+    updateFilenameExtension(card, typeValue);
     let isAudio = typeValue === "audio";
-    if(qualityValue === "best") {
-        $(card).find('.custom-select.download-quality').val($(card).find(`.custom-select.download-quality option.${classValue}:first`).val());
-    } else if(qualityValue === "worst") {
-        if(isAudio) {
-            $(card).find('.custom-select.download-quality').val("worst");
-        } else {
-            $(card).find('.custom-select.download-quality').val($(card).find(`.custom-select.download-quality option.${classValue}:last`).val());
-        }
-    } else if(!isAudio) {
-        const formats = [];
-        $(card).find('.custom-select.download-quality option.video').each(function() {
-            formats.push(this.value);
-        });
-        if(formats.includes(qualityValue)) {
-            $(card).find('.custom-select.download-quality').val(qualityValue);
-        } else {
-            const search = parseFormatString(qualityValue);
-            const closest = formats.reduce((a, b) => {
-                const parsedA = parseFormatString(a);
-                const parsedB = parseFormatString(b);
-                return Math.abs(parsedB.height - search.height) < Math.abs(parsedA.height - search.height) ? b : a;
-            });
-            $(card).find('.custom-select.download-quality').val(closest);
-        }
-    } else if(isAudio) {
-        $('#download-quality').val("best");
-        $(card).find('.custom-select.download-quality').val($(card).find(`.custom-select.download-quality option.${classValue}:first`).val());
-    }
     disableEncodingDropdowns(typeValue, card);
     for(const elem of $(card).find('option')) {
         if($(elem).hasClass("video")) {
@@ -949,7 +1163,20 @@ async function updateVideoSettings(identifier) {
             $(elem).toggle(isAudio)
         }
     }
-    updateCodecs(card, $(card).find('.custom-select.download-quality').val())
+    if(qualityValue === "best" || qualityValue === "worst") {
+        if(isAudio) {
+            $(card).find('.custom-select.download-quality').val(qualityValue);
+        } else {
+            const videoOptions = $(card).find('.custom-select.download-quality option.video');
+            const option = qualityValue === "best" ? videoOptions.first() : videoOptions.last();
+            $(card).find('.custom-select.download-quality').val(option.val());
+        }
+    } else if(isAudio) {
+        $(card).find('.custom-select.download-quality').val(isAudioQualityValue(qualityValue) ? qualityValue : getPreferredQualityForCard(card, "audio"));
+    } else {
+        $(card).find('.custom-select.download-quality').val(getPreferredQualityForCard(card, typeValue, qualityValue));
+    }
+    updateCodecs(card, $(card).find('.custom-select.download-quality').val());
     if($(card).hasClass("unified")) return;
     await getSettings();
     if(oldQuality != null && oldType != null && (oldQuality !== $(card).find('.custom-select.download-quality').val() || oldType !== $(card).find('.custom-select.download-type').val())) {
@@ -967,12 +1194,7 @@ function disableEncodingDropdowns(typeValue, card) {
 }
 
 function updateAllVideoSettings() {
-    let isAudio = $('#download-type').val() === "audio";
-    for(const elem of $('#download-quality option')) {
-        if($(elem).hasClass("video")) {
-            $(elem).toggle(!isAudio)
-        }
-    }
+    syncGlobalQualityOptions($('#download-type').val());
     $('.video-cards').children().each(function () {
         updateVideoSettings($(this).prop("id"));
     });
@@ -981,7 +1203,6 @@ function updateAllVideoSettings() {
 async function getSettings() {
     const settings = await window.main.invoke("settingsAction", {action: "get"});
     $('#updateBinary').prop('checked', settings.updateBinary);
-    $('#updateApplication').prop('checked', settings.updateApplication);
     $('#userAgent').val(settings.userAgent);
     $('#validateCertificate').prop('checked', settings.validateCertificate);
     $('#enableEncoding').prop('checked', settings.enableEncoding);
@@ -995,6 +1216,9 @@ async function getSettings() {
     $('#nameFormat').val(settings.nameFormatMode);
     $('#outputFormat').val(settings.outputFormat);
     $('#audioOutputFormat').val(settings.audioOutputFormat);
+    $('#defaultDownloadType').val(settings.defaultDownloadType);
+    $('#audioDefaultQuality').val(settings.audioDefaultQuality);
+    $('#videoDefaultQuality').val(settings.videoDefaultQuality);
     $('#sponsorblockMark').val(settings.sponsorblockMark.split(",")).change();
     $('#sponsorblockRemove').val(settings.sponsorblockRemove.split(",")).change();
     $('#sponsorblockApi').val(settings.sponsorblockApi);
@@ -1008,23 +1232,26 @@ async function getSettings() {
     $('#maxConcurrent').val(settings.maxConcurrent);
     $('#settingsModal #retries').val(settings.retries);
     $('#settingsModal #fileAccessRetries').val(settings.fileAccessRetries);
-    $('#concurrentLabel').html(`Max concurrent jobs <strong>(${settings.maxConcurrent})</strong>`);
+    setLabeledText($('#concurrentLabel'), "Max concurrent jobs ", `(${settings.maxConcurrent})`);
     $('#sizeSetting').val(settings.sizeMode);
     $('#splitMode').val(settings.splitMode);
     $('#theme').val(settings.theme);
-    $('#version').html("<strong>Version: </strong><a href='https://github.com/StefanLobbenmeier/youtube-dl-gui/releases/tag/v" + settings.version + "' target='_blank'>" + settings.version + " &#128279;</a>");
+    setLabeledText($('#version'), "Version: ", settings.version);
     window.settings = settings;
+    updateModeDefaultLabels(settings);
 }
 
 function sendSettings() {
     let settings = {
         updateBinary: $('#updateBinary').prop('checked'),
-        updateApplication: $('#updateApplication').prop('checked'),
         autoFillClipboard: $('#autoFillClipboard').prop('checked'),
         noPlaylist: $('#noPlaylist').prop('checked'),
         globalShortcut: $('#globalShortcut').prop('checked'),
         outputFormat: $('#outputFormat').val(),
         audioOutputFormat: $('#audioOutputFormat').val(),
+        defaultDownloadType: $('#defaultDownloadType').val(),
+        audioDefaultQuality: $('#audioDefaultQuality').val(),
+        videoDefaultQuality: $('#videoDefaultQuality').val(),
         proxy: $('#proxySetting').val(),
         userAgent: $('#userAgent').val(),
         validateCertificate: $('#validateCertificate').prop('checked'),
@@ -1052,6 +1279,7 @@ function sendSettings() {
         theme: $('#theme').val()
     }
     window.settings = settings;
+    updateModeDefaultLabels(settings);
     window.main.invoke("settingsAction", {action: "save", settings});
     updateEncodingDropdown(settings.enableEncoding);
     toggleWhiteMode(settings.theme);
@@ -1138,17 +1366,20 @@ function showInfoModal(info, identifier) {
             url: $(card).find('.url').val()
         }
     }
-    $(modal).find('img').prop("src", data.thumbnail);
-    $(modal).find('.modal-title').html(data.title);
-    $(modal).find('#info-description').html(data.description == null ? "No description was found." : data.description);
-    $(modal).find('.uploader').html('<strong>Uploader: </strong>' + (data.uploader == null ? "Unknown" : data.uploader));
-    $(modal).find('.extractor').html('<strong>Extractor: </strong>' + (data.extractor == null ? "Unknown" : data.extractor));
-    $(modal).find('.url').html('<strong>URL: </strong>' + '<a target="_blank" href="' + data.url + '">' + data.url + '</a>');
-    $(modal).find('[title="Views"]').html('<i class="bi bi-eye"></i> ' + (data.view_count == null ? "-" : data.view_count));
-    $(modal).find('[title="Like / dislikes"]').html('<i class="bi bi-hand-thumbs-up"></i> ' + (data.like_count == null ? "-" : data.like_count) + ' &nbsp;&nbsp; <i class="bi bi-hand-thumbs-down"></i> ' + (info.dislike_count == null ? "-" : info.dislike_count));
-    $(modal).find('[title="Average rating"]').html('<i class="bi bi-star"></i> ' + (data.average_rating == null ? "-" : data.average_rating.toString().slice(0,3)));
-    $(modal).find('[title="Duration"]').html('<i class="bi bi-clock"></i> ' + (data.duration == null ? "-" : data.duration));
-    $(modal).find('.identifier').html(identifier);
+    setThumbnail($(modal).find('img'), data.thumbnail);
+    $(modal).find('.modal-title').text(data.title);
+    $(modal).find('#info-description').text(data.description == null ? "No description was found." : data.description);
+    setLabeledText($(modal).find('.uploader'), "Uploader: ", data.uploader == null ? "Unknown" : data.uploader);
+    setLabeledText($(modal).find('.extractor'), "Extractor: ", data.extractor == null ? "Unknown" : data.extractor);
+    const link = normalizeExternalUrl(data.url);
+    const urlBox = $(modal).find('.url').empty().append($('<strong>').text('URL: '));
+    if (link == null) urlBox.append(document.createTextNode(String(data.url || "Unknown")));
+    else urlBox.append($('<a>', {target: '_blank', rel: 'noopener noreferrer', href: link}).text(data.url));
+    $(modal).find('[title="Views"]').text(`Views: ${data.view_count == null ? "-" : data.view_count}`);
+    $(modal).find('[title="Like / dislikes"]').text(`Likes: ${data.like_count == null ? "-" : data.like_count}; dislikes: ${data.dislike_count == null ? "-" : data.dislike_count}`);
+    $(modal).find('[title="Average rating"]').text(`Rating: ${data.average_rating == null ? "-" : data.average_rating.toString().slice(0,3)}`);
+    $(modal).find('[title="Duration"]').text(`Duration: ${data.duration == null ? "-" : data.duration}`);
+    $(modal).find('.identifier').text(identifier);
     $(modal).modal("show");
 }
 
@@ -1213,7 +1444,7 @@ function changeDownloadIconToLog(card) {
         .addClass("bi-journal-text")
         .on('click', () => {
             const id = $(card).prop('id');
-            $('#logModal').modal("show").find('.identifier').html(id);
+            $('#logModal').modal("show").find('.identifier').text(id);
             $('#logModal .log').html("Loading log...");
             openLog(id);
             logUpdateTask = setInterval(() => openLog(id), 1000);
@@ -1229,32 +1460,24 @@ function openLog(identifier) {
         if(log == null) {
             $(logBox).val("No log was found for this video.")
         } else {
-            let fullLog = "";
+            $(logBox).empty();
             for(const line of log) {
+                const paragraph = $('<p>');
                 if(line.startsWith("WARNING")) {
-                    const pre = line.slice(0, line.indexOf("W")) + "<strong>" + line.slice(line.indexOf("W"));
-                    const suffixed = pre.slice(0, pre.indexOf(":") + 1) + "</strong>" + pre.slice(pre.indexOf(":") + 1);
-                    fullLog += "<p class='text-warning'>" + suffixed + "</p>";
+                    paragraph.addClass('text-warning');
                 } else if(line.startsWith("ERROR")) {
-                    const pre = line.slice(0, line.indexOf("E")) + "<strong>" + line.slice(line.indexOf("E"));
-                    const suffixed = pre.slice(0, pre.indexOf(":") + 1) + "</strong>" + pre.slice(pre.indexOf(":") + 1);
-                    fullLog += "<p class='text-danger'>" + suffixed + "</p>";
-                } else if(line.startsWith("[")) {
-                    const pre = line.slice(0, line.indexOf("[")) + "<strong>" + line.slice(line.indexOf("["));
-                    const suffixed = pre.slice(0, pre.indexOf("]") + 1) + "</strong>" + pre.slice(pre.indexOf("]") + 1);
-                    fullLog += "<p>" + suffixed + "</p>";
-                } else {
-                    fullLog += "<p><strong>" + line + "</strong></p>";
+                    paragraph.addClass('text-danger');
                 }
+                paragraph.text(line);
+                $(logBox).append(paragraph);
             }
-            $(logBox).html(fullLog);
         }
     })
 }
 
 function setError(code, description, unexpected, identifier, url) {
     let card = getCard(identifier);
-    $(card).append(`<input type="hidden" class="url" value="${url}">`);
+    $(card).append($('<input>', {type: 'hidden', class: 'url'}).val(url));
     $(card).find('.progress-bar').removeClass("progress-bar-striped").removeClass("progress-bar-animated").css("width", "100%").css('background-color', 'var(--error-color)');
     $(card).find('.buttons').children().each(function() {
         if($(this).hasClass("remove-btn") || $(this).hasClass("info-btn") || $(this).find("i").hasClass("bi-journal-text")) {
@@ -1269,8 +1492,16 @@ function setError(code, description, unexpected, identifier, url) {
         window.main.invoke("videoAction", {action: "info", identifier: identifier});
     });
     $(card).find('.report').prop("disabled", false);
+    $(card).find('.report').unbind().on('click', async () => {
+        await window.main.invoke('copyFailureReport', identifier);
+        showToast({
+            type: "update",
+            title: "Failure report copied",
+            body: "A detailed failure report has been copied to your clipboard."
+        });
+    });
     $(card).css("box-shadow", "none").css("border", "solid 1px var(--error-color)");
-    $(card).find('.progress small').html("Error! " + code + ".");
+    $(card).find('.progress small').text("Error! " + code + ".");
     $(card).find('.progress').addClass("d-flex");
     sizeCache = sizeCache.filter(item => item[0] !== identifier)
     if(unexpected) {
@@ -1282,7 +1513,7 @@ function setError(code, description, unexpected, identifier, url) {
     } else {
         $(card).find('.options, .open').addClass("d-none").removeClass("d-flex");
         $(card).find('.info').addClass('d-flex').removeClass("d-none");
-        $(card).find('.metadata.info').removeClass("d-none").html(description);
+        $(card).find('.metadata.info').removeClass("d-none").text(description);
     }
 }
 

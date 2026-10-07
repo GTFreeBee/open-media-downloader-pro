@@ -1,57 +1,82 @@
-name: Build artifacts to link to release
-
+name: Release
 on:
   push:
-    tags:
-      - '*'
-
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
-  build-linux:
+  verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-node@v2
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-      - name: Install npm modules
-        run: npm ci
-      - name: Build and publish artifact
-        run: npm_config_yes=true npx electron-builder -p always
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Get version
-        id: package-version
-        uses: martinbeentjes/npm-get-version-action@master
-        with:
-          environment: production
-          version: ${{ steps.package-version.outputs.current-version }}
-  build-windows:
-    runs-on: windows-latest
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run verify
+      - name: Verify tag matches package version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: test "${GITHUB_REF_NAME}" = "v$(node -p "require('./package.json').version")"
+  build:
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win
+          - os: ubuntu-latest
+            platform: linux
+          - os: macos-latest
+            platform: mac
+    runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-node@v2
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-      - name: Install npm modules
-        run: npm ci
-      - name: Build and publish artifact
-        run: env npm_config_yes=true npx electron-builder -p always
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Build ${{ matrix.platform }} packages
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and publish portable artifact
-        run: env npm_config_yes=true npx electron-builder --win portable -p always
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  build-mac:
-    runs-on: macos-latest
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run build:${{ matrix.platform }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.platform }}
+          path: |
+            dist/*.exe
+            dist/*.AppImage
+            dist/*.dmg
+            dist/*.zip
+          if-no-files-found: error
+          retention-days: 14
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-node@v2
+      - uses: actions/download-artifact@v4
         with:
-          node-version: '20'
-      - name: Install npm modules
-        run: npm ci
-      - name: Build and publish artifact
-        run: npm_config_yes=true npx electron-builder -p always
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+      - name: Create checksums
+        working-directory: release-assets
+        run: sha256sum * > SHA256SUMS.txt
+      - name: Publish GitHub release
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" release-assets/* --verify-tag --generate-notes --title "Open Media Downloader Pro ${GITHUB_REF_NAME#v}"

@@ -2,7 +2,16 @@ const child_process = require('child_process'),
     fs = require('fs'),
     path = require('path');
 
-const appName = "open-video-downloader";
+const appName = "open-media-downloader-pro";
+
+async function removeAppUpdateConfig(appOutDir) {
+    const appUpdatePath = path.join(appOutDir, "resources", "app-update.yml");
+    try {
+        await fs.promises.rm(appUpdatePath, { force: true });
+    } catch (error) {
+        console.error(error);
+    }
+}
 
 function isLinux(targets) {
     const re = /AppImage|snap|deb|rpm|freebsd|pacman/i;
@@ -10,6 +19,7 @@ function isLinux(targets) {
 }
 
 async function afterPack({targets, appOutDir}) {
+    await removeAppUpdateConfig(appOutDir);
     if (!isLinux(targets)) return;
     const script = '#!/bin/bash\n"${BASH_SOURCE%/*}"/' + appName + '.bin "$@" --no-sandbox --ozone-platform-hint=auto',
         scriptPath = path.join(appOutDir, appName);

@@ -1,10 +1,10 @@
 const { clipboard } = require('electron');
+const {getSafeExternalUrl} = require('./ExternalNavigation');
 
 class ClipboardWatcher {
     constructor(win, env) {
         this.win = win;
         this.env = env;
-        this.urlRegex = /https?:\/\/(www\.)?[-a-zA-Z0-9@:%._+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_+.~#?&//=]*)?/gi;
     }
 
     startPolling() {
@@ -14,25 +14,31 @@ class ClipboardWatcher {
 
     resetPlaceholder() {
         const standard = "Enter a video/playlist URL to add to the queue";
-        if (this.win != null) {
-            this.win.webContents.send("updateLinkPlaceholder", {text: standard, copied: false});
-        }
+        this.updatePlaceholder(standard, false);
+    }
+
+    updatePlaceholder(text, copied) {
+        const state = `${copied}:${text}`;
+        if(this.placeholderState === state) return;
+        this.placeholderState = state;
+        if(this.win != null) this.win.webContents.send("updateLinkPlaceholder", {text, copied});
     }
 
     poll() {
         if(this.env.settings.autoFillClipboard) {
-            const text = clipboard.readText();
-            if (text != null) {
-                if (this.previous != null && this.previous === text) return;
-                this.previous = text;
-                const isURL = text.match(this.urlRegex);
-                if (isURL) {
-                    if (this.win != null) {
-                        this.win.webContents.send("updateLinkPlaceholder", {text: text, copied: true});
-                    }
-                } else {
-                    this.resetPlaceholder();
-                }
+            const clipboardValue = clipboard.readText();
+            if (typeof clipboardValue !== "string") {
+                this.resetPlaceholder();
+                return;
+            }
+            const text = clipboardValue.trim();
+            if (text.length === 0) {
+                this.resetPlaceholder();
+                return;
+            }
+            const safeUrl = getSafeExternalUrl(text);
+            if (safeUrl != null) {
+                this.updatePlaceholder(safeUrl, true);
             } else {
                 this.resetPlaceholder();
             }

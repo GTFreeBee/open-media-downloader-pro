@@ -1,24 +1,32 @@
 name: Update winget package
-
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version number'
+        description: Version number
         required: true
-
+      package_id:
+        description: Winget package identifier
+        required: true
+        default: GlenTertainment.OpenMediaDownloaderPro
+      installer_url:
+        description: HTTPS installer URL for this release
+        required: true
+permissions:
+  contents: read
 jobs:
   wingetcreate-update:
     runs-on: windows-latest
     steps:
-      - uses: actions/setup-dotnet@v1
-        with:
-          dotnet-version: '5.0.x'
-      - name: Run wingetcreate
-        env:
-          APP_VERSION: ${{ github.event.inputs.version }}
-          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
-        shell: cmd
+      - name: Validate inputs
+        shell: pwsh
         run: |
-          curl https://aka.ms/wingetcreate/latest -L --output wingetcreate.exe
-          wingetcreate.exe update StefanLobbenmeier.youtube-dl-gui -s true -u https://github.com/StefanLobbenmeier/youtube-dl-gui/releases/download/v%APP_VERSION%/Open-Video-Downloader-Setup-%APP_VERSION%.exe -v %APP_VERSION%  -t %WINGET_TOKEN%
+          if ('${{ inputs.version }}' -notmatch '^\d+\.\d+\.\d+$') { throw 'Version must use semantic version format.' }
+          if ('${{ inputs.installer_url }}' -notmatch '^https://') { throw 'Installer URL must use HTTPS.' }
+      - name: Update winget manifest
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        shell: pwsh
+        run: |
+          Invoke-WebRequest 'https://aka.ms/wingetcreate/latest' -OutFile 'wingetcreate.exe'
+          .\wingetcreate.exe update '${{ inputs.package_id }}' -s true -u '${{ inputs.installer_url }}' -v '${{ inputs.version }}' -t $env:WINGET_TOKEN

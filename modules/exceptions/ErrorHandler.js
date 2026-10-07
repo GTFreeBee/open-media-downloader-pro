@@ -12,13 +12,15 @@ class ErrorHandler {
         this.loadErrorDefinitions().then(errorDefs => this.errorDefinitions = errorDefs);
     }
 
-    checkError(stderr, identifier) {
+    checkError(errorOutput, identifier) {
+        let stderr = errorOutput;
         let foundError = false;
         if(stderr == null) {
             console.error("An error has occurred but no error message was given.")
             return false;
         }
-        if(stderr.trim().startsWith("WARNING:")) {
+        stderr = typeof stderr === "string" ? stderr : (stderr.message || String(stderr));
+        if(stderr.trim().startsWith("WARNING:") && !stderr.includes("ERROR:")) {
             console.warn(stderr);
             return;
         }
@@ -29,11 +31,11 @@ class ErrorHandler {
                         if(errorDef.code === "ffmpeg not found" && process.argv[2] === '--dev') return false; //Do not raise a 'ffmpeg not found' error when in dev mode
                         if(errorDef.code === "Thumbnail embedding not supported") return false; //Do not raise an error when thumbnails can't be embedded due to unsupported container
                         foundError = true;
-                        errorDef.trigger = trigger;
-                        this.raiseError(errorDef, identifier);
+                        this.raiseError({ ...errorDef, trigger }, identifier);
                         break;
                     }
                 }
+                if(foundError) break;
             } else if(stderr.includes(errorDef.trigger)) {
                 if(errorDef.code === "ffmpeg not found" && process.argv[2] === '--dev') return false; //Do not raise a 'ffmpeg not found' error when in dev mode
                 if(errorDef.code === "Thumbnail embedding not supported") return false; //Do not raise an error when thumbnails can't be embedded due to unsupported container
@@ -69,6 +71,13 @@ class ErrorHandler {
         };
         this.win.webContents.send("error", errorDef);
         this.unhandledErrors.push(errorDef);
+        if(this.env.logger != null && typeof this.env.logger.persistFailure === "function") {
+            this.env.logger.persistFailure(identifier, {
+                code: errorDef.error.code,
+                description: errorDef.error.description,
+                url: video.url
+            }).catch((persistError) => console.error(persistError));
+        }
         this.queryManager.onError(identifier);
     }
 
@@ -78,6 +87,13 @@ class ErrorHandler {
         if(video.type === "playlist") return;
         console.error(errorDef.code + " - " + errorDef.description);
         this.win.webContents.send("error", { error: errorDef, identifier: identifier, unexpected: false, url: video.url });
+        if(this.env.logger != null && typeof this.env.logger.persistFailure === "function") {
+            this.env.logger.persistFailure(identifier, {
+                code: errorDef.code,
+                description: errorDef.description,
+                url: video.url
+            }).catch((persistError) => console.error(persistError));
+        }
         this.queryManager.onError(identifier);
     }
 

@@ -2,27 +2,36 @@ const os = require("os");
 const { globalShortcut, clipboard } = require('electron');
 const fs = require("fs").promises;
 
+const AUDIO_QUALITIES = new Set(["best", "worst", "320k", "256k", "224k", "192k", "160k", "128k", "96k"]);
+const VIDEO_QUALITIES = new Set(["best", "worst", "2160p", "1440p", "1080p", "720p", "480p", "360p"]);
+const DOWNLOAD_LANES = new Set(["audio", "video"]);
+
+function allowedOrDefault(value, allowed, fallback) {
+    return allowed.has(value) ? value : fallback;
+}
+
 class Settings {
     constructor(
         paths, env, outputFormat, audioOutputFormat, downloadPath,
         proxy, rateLimit, autoFillClipboard, noPlaylist, globalShortcut, userAgent,
         validateCertificate, enableEncoding, taskList, nameFormat, nameFormatMode,
-        sizeMode, splitMode, maxConcurrent, retries, fileAccessRetries, updateBinary, downloadType, updateApplication, cookiePath,
+        sizeMode, splitMode, maxConcurrent, retries, fileAccessRetries, updateBinary, downloadType, cookiePath,
         statSend, sponsorblockMark, sponsorblockRemove, sponsorblockApi, downloadMetadata, downloadJsonMetadata, compatFilename,
-        downloadThumbnail, keepUnmerged, avoidFailingToSaveDuplicateFileName, calculateTotalSize, theme
+        downloadThumbnail, keepUnmerged, avoidFailingToSaveDuplicateFileName, calculateTotalSize, theme,
+        defaultDownloadType, audioDefaultQuality, videoDefaultQuality
     ) {
         this.paths = paths;
         this.env = env
-        this.outputFormat = outputFormat == null ? "none" : outputFormat;
-        this.audioOutputFormat = audioOutputFormat == null ? "none" : audioOutputFormat;
+        this.outputFormat = outputFormat == null ? "mp4" : outputFormat;
+        this.audioOutputFormat = audioOutputFormat == null ? "mp3" : audioOutputFormat;
         this.downloadPath = downloadPath == null ? env.app.getPath("downloads") : downloadPath;
         this.proxy = proxy == null ? "" : proxy;
         this.rateLimit = rateLimit == null ? "" : rateLimit;
         this.autoFillClipboard = autoFillClipboard == null ? true : autoFillClipboard;
         this.noPlaylist = noPlaylist == null ? false : noPlaylist;
         this.globalShortcut = globalShortcut == null ? true : globalShortcut;
-        this.userAgent = userAgent == null ? "spoof" : userAgent;
-        this.validateCertificate = validateCertificate == null ? false : validateCertificate;
+        this.userAgent = userAgent === "empty" ? "empty" : "default";
+        this.validateCertificate = validateCertificate == null ? true : validateCertificate;
         this.enableEncoding = enableEncoding == null ? false : enableEncoding;
         this.taskList = taskList == null ? true : taskList;
         this.nameFormat = nameFormat == null ? "%(title).200s-(%(height)sp%(fps).0d).%(ext)s" : nameFormat;
@@ -43,8 +52,10 @@ class Settings {
         this.retries = retries || 10;
         this.fileAccessRetries = fileAccessRetries || 3;
         this.updateBinary = updateBinary == null ? true : updateBinary;
-        this.downloadType = downloadType == null ? "video" : downloadType;
-        this.updateApplication = updateApplication == null ? true : updateApplication;
+        this.downloadType = downloadType == null ? "audio" : downloadType;
+        this.defaultDownloadType = allowedOrDefault(defaultDownloadType, DOWNLOAD_LANES, this.downloadType === "audio" ? "audio" : "video");
+        this.audioDefaultQuality = allowedOrDefault(audioDefaultQuality, AUDIO_QUALITIES, "320k");
+        this.videoDefaultQuality = allowedOrDefault(videoDefaultQuality, VIDEO_QUALITIES, "720p");
         this.cookiePath = cookiePath;
         this.statSend = statSend == null ? false : statSend;
         this.theme = theme == null ? "dark" : theme;
@@ -59,7 +70,7 @@ class Settings {
             halfOfCpus = 4;
         }
 
-        return halfOfCpus;
+        return Math.min(halfOfCpus, 2);
     }
 
     static async loadFromFile(paths, env) {
@@ -90,7 +101,6 @@ class Settings {
                 data.fileAccessRetries,
                 data.updateBinary,
                 data.downloadType,
-                data.updateApplication,
                 data.cookiePath,
                 data.statSend,
                 data.sponsorblockMark,
@@ -103,10 +113,13 @@ class Settings {
                 data.keepUnmerged,
                 data.avoidFailingToSaveDuplicateFileName,
                 data.calculateTotalSize,
-                data.theme
+                data.theme,
+                data.defaultDownloadType,
+                data.audioDefaultQuality,
+                data.videoDefaultQuality
             );
         } catch(err) {
-            console.log(err);
+            if(err.code !== "ENOENT") console.error("Could not load settings; defaults will be used.", err);
             let settings = new Settings(paths, env);
             settings.save();
             console.log("Created new settings file.")
@@ -122,7 +135,7 @@ class Settings {
         this.autoFillClipboard = settings.autoFillClipboard;
         this.noPlaylist = settings.noPlaylist;
         this.globalShortcut = settings.globalShortcut;
-        this.userAgent = settings.userAgent;
+        this.userAgent = settings.userAgent === "empty" ? "empty" : "default";
         this.validateCertificate = settings.validateCertificate;
         this.enableEncoding = settings.enableEncoding;
         this.taskList = settings.taskList;
@@ -148,12 +161,11 @@ class Settings {
         this.fileAccessRetries = settings.fileAccessRetries;
         this.updateBinary = settings.updateBinary;
         this.downloadType = settings.downloadType;
-        this.updateApplication = settings.updateApplication;
+        this.defaultDownloadType = allowedOrDefault(settings.defaultDownloadType, DOWNLOAD_LANES, this.defaultDownloadType);
+        this.audioDefaultQuality = allowedOrDefault(settings.audioDefaultQuality, AUDIO_QUALITIES, this.audioDefaultQuality);
+        this.videoDefaultQuality = allowedOrDefault(settings.videoDefaultQuality, VIDEO_QUALITIES, this.videoDefaultQuality);
         this.theme = settings.theme;
         this.save();
-
-        //Prevent installing already downloaded updates on app close.
-        this.env.appUpdater.setUpdateSetting(settings.updateApplication);
         this.setGlobalShortcuts();
     }
 
@@ -181,7 +193,9 @@ class Settings {
             defaultConcurrent: this.getDefaultMaxConcurrent(),
             updateBinary: this.updateBinary,
             downloadType: this.downloadType,
-            updateApplication: this.updateApplication,
+            defaultDownloadType: this.defaultDownloadType,
+            audioDefaultQuality: this.audioDefaultQuality,
+            videoDefaultQuality: this.videoDefaultQuality,
             cookiePath: this.cookiePath,
             statSend: this.statSend,
             sponsorblockMark: this.sponsorblockMark,

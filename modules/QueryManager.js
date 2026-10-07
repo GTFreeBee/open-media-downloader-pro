@@ -13,6 +13,7 @@ const SizeQuery = require("./size/SizeQuery");
 const DownloadQueryList = require("./download/DownloadQueryList");
 const Format = require("./types/Format");
 const DoneAction = require("./DoneAction");
+const FilenameOverride = require("./FilenameOverride");
 
 class QueryManager {
     constructor(window, environment) {
@@ -20,16 +21,22 @@ class QueryManager {
         this.environment = environment;
         this.managedVideos = [];
         this.playlistMetadata = [];
+        this.activeDownloadActions = new Map();
+        this.pendingRecoveryActions = [];
     }
 
     async manage(url) {
         let metadataVideo = new Video(url, "metadata", this.environment);
         this.addVideo(metadataVideo);
-        const initialQuery = await new InfoQuery(url, metadataVideo.identifier, this.environment).connect();
-        if(metadataVideo.error) return;
+        let metadataQuery = new InfoQuery(url, metadataVideo.identifier, this.environment);
+        metadataVideo.setQuery(metadataQuery);
+        const initialQuery = await metadataQuery.connect();
+        if(!this.isManagedVideo(metadataVideo.identifier) || metadataVideo.error || initialQuery == null || initialQuery === "killed") return;
         if(Utils.isYouTubeChannel(url)) {
-            const actualQuery = await new InfoQuery(initialQuery.entries[0].url, metadataVideo.identifier, this.environment).connect();
-            if(metadataVideo.error) return;
+            metadataQuery = new InfoQuery(initialQuery.entries[0].url, metadataVideo.identifier, this.environment);
+            metadataVideo.setQuery(metadataQuery);
+            const actualQuery = await metadataQuery.connect();
+            if(!this.isManagedVideo(metadataVideo.identifier) || metadataVideo.error || actualQuery == null || actualQuery === "killed") return;
             this.removeVideo(metadataVideo);
             if(actualQuery.entries == null || actualQuery.entries.length === 0) this.managePlaylist(initialQuery, url);
             else this.managePlaylist(actualQuery, initialQuery.entries[0].url);
@@ -49,7 +56,7 @@ class QueryManager {
                 this.environment.errorHandler.raiseError({code: "Not supported", description: "Livestreams are not yet supported."}, metadataVideo.identifier);
                 break;
             default:
-                //This.environment.errorHandler.raiseUnhandledError("Youtube-dl returned an empty object\n" + JSON.stringify(Utils.detectInfoType(initialQuery), null, 2), metadataVideo.identifier);
+                //This.environment.errorHandler.raiseUnhandledError("The downloader backend returned an empty object\n" + JSON.stringify(Utils.detectInfoType(initialQuery), null, 2), metadataVideo.identifier);
                 break;
         }
     }
@@ -58,6 +65,7 @@ class QueryManager {
         let video = new Video(url, "single", this.environment);
         video.setMetadata(initialQuery);
         this.addVideo(video);
+        this.tryStartPendingRecoveryActions();
         setTimeout(() => this.updateGlobalButtons(), 700); //This feels kinda hacky, maybe find a better way sometime.
     }
 
@@ -66,7 +74,11 @@ class QueryManager {
         let playlistVideo = new Video(url, "playlist", this.environment);
         this.addVideo(playlistVideo);
         const playlistQuery = new InfoQueryList(initialQuery, this.environment, new ProgressBar(this, playlistVideo));
+        playlistVideo.setQuery(playlistQuery);
         playlistQuery.start().then((videos) => {
+            if(!this.isManagedVideo(playlistVideo.identifier) || playlistVideo.error || videos == null) {
+                return;
+            }
             if(videos.length > this.environment.settings.splitMode) {
                 let totalFormats = [];
                 let totalAudioCodecs = [];
@@ -108,6 +120,7 @@ class QueryManager {
                     this.addVideo(video);
                 }
             }
+            this.tryStartPendingRecoveryActions();
             setTimeout(() => this.updateGlobalButtons(), 700); //This feels kinda hacky, maybe find a better way sometime.
             setTimeout(() => this.updateGlobalButtons(), 2000); //This feels even more hacky, maybe find a better way sometime.
         });
@@ -127,6 +140,7 @@ class QueryManager {
             identifier:  video.identifier,
             url: video.url,
             title: video.title,
+            filenameBase: FilenameOverride.normalize(video.getFilename() || video.title),
             duration: video.duration,
             audioOnly: video.audioOnly,
             subtitles: video.downloadSubs,
@@ -142,6 +156,7 @@ class QueryManager {
 
     downloadVideo(args) {
         let downloadVideo = this.getVideo(args.identifier);
+        downloadVideo.filenameOverride = FilenameOverride.normalize(args.filenameOverride);
         downloadVideo.selectedEncoding = args.encoding;
         downloadVideo.selectedAudioEncoding = args.audioEncoding;
         downloadVideo.audioOnly = args.type === "audio";
@@ -155,10 +170,29 @@ class QueryManager {
             }
         }
         downloadVideo.audioQuality = (downloadVideo.audioQuality != null) ? downloadVideo.audioQuality : "best";
+        if(args.subtitleState != null) {
+            this.applySubtitleState(downloadVideo, args.subtitleState);
+        }
         let progressBar = new ProgressBar(this, downloadVideo);
+        const actionId = this.registerDownloadAction(
+            args.recoveryActionId,
+            args.snapshot || this.buildSingleActionSnapshot(downloadVideo, args),
+            [downloadVideo],
+            1,
+            args.resumeRecovery === true
+        );
         downloadVideo.setQuery(new DownloadQuery(downloadVideo.url, downloadVideo, this.environment, progressBar, this.playlistMetadata));
-        downloadVideo.query.connect().then(() => {
+        downloadVideo.query.connect().then((returnValue) => {
+            this.recordDownloadActionResult(actionId, returnValue, downloadVideo);
             //Backup done call, sometimes it does not trigger automatically from within the downloadQuery.
+            if(returnValue !== "done") {
+                if(returnValue !== "killed") {
+                    downloadVideo.error = true;
+                    this.environment.errorHandler.checkError(returnValue, downloadVideo.identifier);
+                }
+                this.updateGlobalButtons();
+                return;
+            }
             if(downloadVideo.error) return;
             if(this.environment.settings.downloadJsonMetadata) this.saveInfo(downloadVideo.identifier, false);
             downloadVideo.downloaded = true;
@@ -171,10 +205,16 @@ class QueryManager {
         let videosToDownload = [];
         let unifiedPlaylists = [];
         let videoMetadata = [];
+        const queueItems = [];
         for(const videoObj of args.videos) {
             let video = this.getVideo(videoObj.identifier);
+            if(video == null) continue;
+            video.filenameOverride = video.videos == null ? FilenameOverride.normalize(videoObj.filenameOverride) : null;
             video.selectedEncoding = videoObj.encoding;
             video.selectedAudioEncoding = videoObj.audioEncoding;
+            if(videoObj.subtitleState != null) {
+                this.applySubtitleState(video, videoObj.subtitleState, video.videos != null);
+            }
             if(video.videos == null) {
                 if(video.downloaded || video.type !== "single") continue;
                 video.audioOnly = videoObj.type === "audio";
@@ -195,6 +235,7 @@ class QueryManager {
                 }
                 video.audioQuality = (video.audioQuality != null) ? video.audioQuality : "best";
                 videosToDownload.push(video);
+                queueItems.push(this.buildQueueItemSnapshot(video, videoObj, false));
             } else {
                 video.url = videoObj.url;
                 unifiedPlaylists.push(video);
@@ -208,10 +249,31 @@ class QueryManager {
                     unifiedVideo.parentSize = video.videos.length;
                     videosToDownload.push(unifiedVideo);
                 }
+                queueItems.push(this.buildQueueItemSnapshot(video, videoObj, true));
             }
         }
+        const actionId = this.registerDownloadAction(
+            args.recoveryActionId,
+            args.snapshot || {
+                type: "queue",
+                sourceUrls: queueItems.map((item) => item.sourceUrl),
+                request: {
+                    videos: queueItems
+                }
+            },
+            videosToDownload,
+            videosToDownload.length,
+            args.resumeRecovery === true
+        );
+        for(const unifiedPlaylist of unifiedPlaylists) {
+            unifiedPlaylist.activeRecoveryActionId = actionId;
+        }
         let progressBar = new ProgressBar(this, "queue");
-        let downloadList = new DownloadQueryList(videosToDownload, videoMetadata, this.environment, this, progressBar);
+        let downloadList = new DownloadQueryList(videosToDownload, videoMetadata, this.environment, this, progressBar, {
+            onItemResult: (video, returnValue) => {
+                this.recordDownloadActionResult(actionId, returnValue, video);
+            }
+        });
         for(const unifiedPlaylist of unifiedPlaylists) { unifiedPlaylist.setQuery(downloadList) }
         downloadList.start().then(() => {
             for(const unifiedPlaylist of unifiedPlaylists) { unifiedPlaylist.downloaded = true }
@@ -254,10 +316,25 @@ class QueryManager {
         const playlist = this.getVideo(args.identifier);
         const videos = playlist.videos;
         const metadata = videos.map(vid => Utils.getVideoInPlaylistMetadata(vid.url, playlist.url, this.playlistMetadata)).filter(entry => entry != null);
+        if(args.subtitleState != null) {
+            this.applySubtitleState(playlist, args.subtitleState, true);
+        }
         this.getUnifiedVideos(playlist, videos, args.type === "audio", args.format, playlist.downloadSubs);
         playlist.audioQuality = (playlist.audioQuality != null) ? playlist.audioQuality : "best";
+        const actionId = this.registerDownloadAction(
+            args.recoveryActionId,
+            args.snapshot || this.buildUnifiedActionSnapshot(playlist, args),
+            videos,
+            videos.length,
+            args.resumeRecovery === true
+        );
+        playlist.activeRecoveryActionId = actionId;
         let progressBar = new ProgressBar(this, playlist);
-        playlist.setQuery(new DownloadQueryList(videos, metadata, this.environment, this, progressBar));
+        playlist.setQuery(new DownloadQueryList(videos, metadata, this.environment, this, progressBar, {
+            onItemResult: (video, returnValue) => {
+                this.recordDownloadActionResult(actionId, returnValue, video);
+            }
+        }));
         playlist.query.start().then(() => {
             //Backup done call, sometimes it does not trigger automatically from within the downloadQuery.
             playlist.downloaded = true;
@@ -357,10 +434,17 @@ class QueryManager {
         }
     }
 
-    stopDownload(identifier) {
+    async stopDownload(identifier) {
         let video = this.getVideo(identifier);
+        if(video == null) {
+            return;
+        }
+        this.cancelPendingRecoveryForVideo(video);
+        if(video != null && video.activeRecoveryActionId != null) {
+            await this.cancelDownloadAction(video.activeRecoveryActionId, [video]);
+        }
         if (video.query != null) {
-            video.query.cancel();
+            await video.query.cancel();
         }
         this.removeVideo(video);
     }
@@ -556,10 +640,299 @@ class QueryManager {
         });
     }
 
-    getTaskList() {
+    getVideoByUrl(searchUrl, predicate = null) {
+        return this.managedVideos.find((item) => {
+            if(item.url !== searchUrl) {
+                return false;
+            }
+            if(predicate == null) {
+                return true;
+            }
+            return predicate(item);
+        });
+    }
+
+    buildSubtitleState(video) {
+        const selected = video.selectedSubs || [[], []];
+        return {
+            enabled: video.downloadSubs === true,
+            subs: selected[0] || [],
+            autoGen: selected[1] || []
+        };
+    }
+
+    applySubtitleState(video, subtitleState, unified = false) {
+        if(subtitleState == null) {
+            return;
+        }
+        const args = {
+            enabled: subtitleState.enabled,
+            subs: subtitleState.subs || [],
+            autoGen: subtitleState.autoGen || []
+        };
+        if(unified && video.videos != null) {
+            this.setUnifiedSubtitle(video.videos, args);
+        }
+        video.downloadSubs = args.enabled;
+        video.selectedSubs = [args.subs, args.autoGen];
+        video.subLanguages = [...new Set([...args.subs, ...args.autoGen])];
+    }
+
+    buildSingleActionSnapshot(video, args) {
+        return {
+            type: "single",
+            sourceUrls: [video.url],
+            request: {
+                sourceUrl: video.url,
+                type: args.type,
+                format: args.format,
+                encoding: args.encoding,
+                audioEncoding: args.audioEncoding,
+                filenameOverride: video.filenameOverride,
+                subtitleState: this.buildSubtitleState(video)
+            }
+        };
+    }
+
+    buildUnifiedActionSnapshot(video, args) {
+        return {
+            type: "unified",
+            sourceUrls: [video.url],
+            request: {
+                sourceUrl: video.url,
+                type: args.type,
+                format: args.format,
+                encoding: args.encoding,
+                audioEncoding: args.audioEncoding,
+                subtitleState: this.buildSubtitleState(video)
+            }
+        };
+    }
+
+    buildQueueItemSnapshot(video, args, unified) {
+        return {
+            sourceUrl: video.url,
+            unified: unified,
+            type: args.type,
+            format: args.format,
+            encoding: args.encoding,
+            audioEncoding: args.audioEncoding,
+            filenameOverride: unified ? null : video.filenameOverride,
+            subtitleState: this.buildSubtitleState(video)
+        };
+    }
+
+    registerDownloadAction(actionId, snapshot, videos, totalItems, resumeRecovery = false) {
+        const usedActionId = actionId || Utils.getRandomID(16);
+        const actionState = {
+            id: usedActionId,
+            total: totalItems,
+            done: 0,
+            failed: 0,
+            cancelled: 0,
+            lastError: null
+        };
+        this.activeDownloadActions.set(usedActionId, actionState);
+        for(const video of videos) {
+            video.activeRecoveryActionId = usedActionId;
+        }
+
+        const storeEntry = {
+            id: usedActionId,
+            type: snapshot.type,
+            status: "active",
+            sourceUrls: snapshot.sourceUrls,
+            request: snapshot.request,
+            progress: {
+                total: totalItems,
+                done: 0,
+                failed: 0,
+                cancelled: 0
+            }
+        };
+        this.environment.downloadRecovery.upsert(storeEntry)
+            .then(() => {
+                if(resumeRecovery) {
+                    return this.environment.downloadRecovery.markResumed(usedActionId);
+                }
+            })
+            .catch((error) => console.error(error));
+        return usedActionId;
+    }
+
+    recordDownloadActionResult(actionId, returnValue, video) {
+        if(actionId == null) {
+            return;
+        }
+        const actionState = this.activeDownloadActions.get(actionId);
+        if(actionState == null) {
+            return;
+        }
+        actionState.done++;
+        if(returnValue === "killed") {
+            actionState.cancelled++;
+        } else if(returnValue !== "done") {
+            actionState.failed++;
+            actionState.lastError = returnValue;
+        }
+        const progress = {
+            total: actionState.total,
+            done: actionState.done,
+            failed: actionState.failed,
+            cancelled: actionState.cancelled
+        };
+        this.environment.downloadRecovery.markProgress(actionId, progress).catch((error) => console.error(error));
+        if(video != null && video.query != null && typeof video.query.getStagingKey === "function") {
+            this.environment.downloadRecovery.addStagingKey(actionId, video.query.getStagingKey()).catch((error) => console.error(error));
+        }
+        if(actionState.done < actionState.total) {
+            return;
+        }
+        if(actionState.failed > 0) {
+            this.environment.downloadRecovery.markInterrupted(actionId, {
+                progress: progress,
+                lastError: actionState.lastError
+            }).catch((error) => console.error(error));
+        } else {
+            this.environment.downloadRecovery.complete(actionId).catch((error) => console.error(error));
+        }
+        this.activeDownloadActions.delete(actionId);
+    }
+
+    async cancelDownloadAction(actionId, videos = []) {
+        const entry = this.environment.downloadRecovery.getEntry(actionId);
+        const stagingKeys = [];
+        for(const video of videos) {
+            if(video != null && video.query != null && typeof video.query.getStagingKey === "function") {
+                stagingKeys.push(video.query.getStagingKey());
+            }
+        }
+        this.pendingRecoveryActions = this.pendingRecoveryActions.filter((entry) => entry.id !== actionId);
+        this.activeDownloadActions.delete(actionId);
+        await this.environment.downloadRecovery.cancel(actionId, {
+            stagingKeys: stagingKeys
+        }).catch((error) => console.error(error));
+        if(entry != null && entry.sourceUrls != null) {
+            this.playlistMetadata = this.playlistMetadata.filter((item) => !entry.sourceUrls.includes(item.playlist_url) && !entry.sourceUrls.includes(item.video_url));
+        }
+    }
+
+    async resumeInterruptedDownloads() {
+        const recoveryEntries = this.environment.downloadRecovery.getResumableEntries();
+        if(recoveryEntries.length === 0) {
+            return [];
+        }
+        this.window.webContents.send("toast", {
+            type: "update",
+            title: "Resuming interrupted downloads",
+            body: `Open Media Downloader Pro found ${recoveryEntries.length} interrupted ${recoveryEntries.length === 1 ? "download" : "downloads"} and is preparing them to resume.`
+        });
+        for(const entry of recoveryEntries) {
+            this.pendingRecoveryActions.push(entry);
+            for(const sourceUrl of entry.sourceUrls || []) {
+                if(this.getVideoByUrl(sourceUrl) == null) {
+                    this.manage(sourceUrl);
+                }
+            }
+        }
+        this.tryStartPendingRecoveryActions();
+        return recoveryEntries;
+    }
+
+    tryStartPendingRecoveryActions() {
+        const remaining = [];
+        for(const entry of this.pendingRecoveryActions) {
+            if(this.startRecoveryEntry(entry)) {
+                continue;
+            }
+            remaining.push(entry);
+        }
+        this.pendingRecoveryActions = remaining;
+    }
+
+    startRecoveryEntry(entry) {
+        switch(entry.type) {
+            case "single": {
+                const video = this.getVideoByUrl(entry.request.sourceUrl, (item) => item.type === "single");
+                if(video == null || video.error) {
+                    return false;
+                }
+                this.applySubtitleState(video, entry.request.subtitleState);
+                this.downloadVideo({
+                    identifier: video.identifier,
+                    format: entry.request.format,
+                    encoding: entry.request.encoding,
+                    audioEncoding: entry.request.audioEncoding,
+                    filenameOverride: entry.request.filenameOverride,
+                    type: entry.request.type,
+                    subtitleState: entry.request.subtitleState,
+                    recoveryActionId: entry.id,
+                    snapshot: entry,
+                    resumeRecovery: true
+                });
+                return true;
+            }
+            case "unified": {
+                const playlist = this.getVideoByUrl(entry.request.sourceUrl, (item) => item.videos != null);
+                if(playlist == null || playlist.error) {
+                    return false;
+                }
+                this.applySubtitleState(playlist, entry.request.subtitleState, true);
+                this.downloadUnifiedPlaylist({
+                    identifier: playlist.identifier,
+                    format: entry.request.format,
+                    encoding: entry.request.encoding,
+                    audioEncoding: entry.request.audioEncoding,
+                    type: entry.request.type,
+                    subtitleState: entry.request.subtitleState,
+                    recoveryActionId: entry.id,
+                    snapshot: entry,
+                    resumeRecovery: true
+                });
+                return true;
+            }
+            case "queue": {
+                const videos = [];
+                for(const item of entry.request.videos) {
+                    const resolved = this.getVideoByUrl(item.sourceUrl, (video) => item.unified ? video.videos != null : video.type === "single");
+                    if(resolved == null || resolved.error) {
+                        return false;
+                    }
+                    this.applySubtitleState(resolved, item.subtitleState, item.unified);
+                    const resolvedArgs = {
+                        identifier: resolved.identifier,
+                        type: item.type,
+                        format: item.format,
+                        encoding: item.encoding,
+                        audioEncoding: item.audioEncoding,
+                        filenameOverride: item.filenameOverride,
+                        downloadSubs: item.subtitleState != null ? item.subtitleState.enabled : false,
+                        subtitleState: item.subtitleState
+                    };
+                    if(item.unified) {
+                        resolvedArgs.url = resolved.url;
+                    }
+                    videos.push(resolvedArgs);
+                }
+                this.downloadAllVideos({
+                    videos: videos,
+                    recoveryActionId: entry.id,
+                    snapshot: entry,
+                    resumeRecovery: true
+                });
+                return true;
+            }
+            default:
+                return true;
+        }
+    }
+
+    getTaskList(excludedUrls = []) {
         const urlList = []
         const filteredUrlList = [];
+        const excluded = new Set(excludedUrls);
         for(const video of this.managedVideos) {
+            if(excluded.has(video.url)) continue;
             urlList.push(video.url)
         }
         for(const video of this.playlistMetadata) {
@@ -588,6 +961,21 @@ class QueryManager {
             count++;
         }
         console.log("Added " + count + " saved tasks.")
+    }
+
+    isManagedVideo(identifier) {
+        return this.getVideo(identifier) != null;
+    }
+
+    cancelPendingRecoveryForVideo(video) {
+        if(video == null || video.url == null) {
+            return;
+        }
+        const matchedEntries = this.pendingRecoveryActions.filter((entry) => (entry.sourceUrls || []).includes(video.url));
+        this.pendingRecoveryActions = this.pendingRecoveryActions.filter((entry) => !(entry.sourceUrls || []).includes(video.url));
+        for(const entry of matchedEntries) {
+            this.environment.downloadRecovery.cancel(entry.id).catch((error) => console.error(error));
+        }
     }
 
 }

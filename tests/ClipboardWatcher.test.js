@@ -36,12 +36,20 @@ describe('poll', () => {
         instance.poll();
         expect(resetMock).toBeCalledTimes(1);
     });
+    it('resets instead of crashing when Electron returns a non-string clipboard value', () => {
+        clipboard.readText.mockReturnValue({text: "https://example.com"});
+        const instance = instanceBuilder(true);
+        const resetMock = jest.spyOn(instance, "resetPlaceholder").mockImplementation(() => {});
+
+        expect(() => instance.poll()).not.toThrow();
+        expect(resetMock).toBeCalledTimes(1);
+    });
     it('sends the URL to renderer if it is one', () => {
         clipboard.readText.mockReturnValue("https://i.am.a.url.com");
         const instance = instanceBuilder(true);
         const resetMock = jest.spyOn(instance, "resetPlaceholder").mockImplementation(() => {});
         instance.poll();
-        expect(instance.win.webContents.send).toBeCalledWith("updateLinkPlaceholder", {text: "https://i.am.a.url.com", copied: true})
+        expect(instance.win.webContents.send).toBeCalledWith("updateLinkPlaceholder", {text: "https://i.am.a.url.com/", copied: true})
         expect(instance.win.webContents.send).toBeCalledTimes(1);
         expect(resetMock).toBeCalledTimes(0);
     });
@@ -63,6 +71,32 @@ describe('poll', () => {
         expect(clipboard.readText).toBeCalledTimes(2);
         expect(resetMock).toBeCalledTimes(0);
         expect(instance.win.webContents.send).toBeCalledTimes(1);
+    });
+    it('does not resend an unchanged reset state every second', () => {
+        clipboard.readText.mockReturnValue("");
+        const instance = instanceBuilder(true);
+
+        instance.poll();
+        instance.poll();
+
+        expect(instance.win.webContents.send).toBeCalledTimes(1);
+    });
+    it('restores a valid URL after the clipboard temporarily contains invalid text', () => {
+        clipboard.readText
+            .mockReturnValueOnce("https://example.com")
+            .mockReturnValueOnce("not a URL")
+            .mockReturnValueOnce("https://example.com");
+        const instance = instanceBuilder(true);
+
+        instance.poll();
+        instance.poll();
+        instance.poll();
+
+        expect(instance.win.webContents.send).toHaveBeenCalledTimes(3);
+        expect(instance.win.webContents.send).toHaveBeenLastCalledWith(
+            "updateLinkPlaceholder",
+            {text: "https://example.com/", copied: true}
+        );
     });
 });
 

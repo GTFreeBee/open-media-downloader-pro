@@ -10,23 +10,25 @@ assignees: ''
 **Describe the bug**
 A clear and concise description of what the bug is.
 
-**To Reproduce**
-Steps to reproduce the behavior:
-1. Go to '...'
-2. Click on '....'
-3. Scroll down to '....'
-4. See error
+**Steps to reproduce**
+List the smallest reliable sequence that triggers the problem.
 
 **Expected behavior**
 A clear and concise description of what you expected to happen.
 
-**Screenshots**
-If applicable, add screenshots to help explain your problem.
+**Diagnostics**
+Paste the redacted failure report from Settings → Diagnostics. Remove private URLs, filenames and account information.
 
 **Additional info (please complete the following information):**
- - OS: [e.g. Windows 10]
- - Application version [e.g. 1.8.4] (the version can be found in the settings menu)
- - Application type [e.g. portable, installer, Microsoft Store]
+ - OS and version: [e.g. Windows 11 24H2]
+ - Application version: [e.g. 1.0.2]
+ - Installation type: [e.g. GitHub installer, AppImage, DMG, source]
+ - Site involved, if it can be named publicly:
 
 **Additional context**
 Add any other context about the problem here.
+
+**Checklist**
+- [ ] I tested the latest release.
+- [ ] I searched existing issues.
+- [ ] I removed cookies, tokens and private information.

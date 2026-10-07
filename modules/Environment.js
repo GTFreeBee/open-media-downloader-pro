@@ -3,6 +3,9 @@ const Filepaths = require("./Filepaths");
 const Settings = require("./persistence/Settings");
 const DetectPython = require("./DetectPython");
 const Logger = require("./persistence/Logger");
+const YtDlpJsRuntime = require("./YtDlpJsRuntime");
+const DownloadRecoveryStore = require("./persistence/DownloadRecoveryStore");
+const SiteBackoff = require("./SiteBackoff");
 const fs = require("fs").promises;
 
 class Environment {
@@ -17,6 +20,9 @@ class Environment {
         this.doneAction = "Do nothing";
         this.logger = new Logger(this);
         this.paths = new Filepaths(app, this);
+        this.ytDlpJsRuntime = null;
+        this.downloadRecovery = new DownloadRecoveryStore(this);
+        this.siteBackoff = new SiteBackoff();
         this.downloadLimiter = new Bottleneck({
             trackDoneStatus: true,
             maxConcurrent: 4,
@@ -27,12 +33,19 @@ class Environment {
             maxConcurrent: 4,
             minTime: 0
         })
+        this.fileOperationLimiter = new Bottleneck({
+            trackDoneStatus: true,
+            maxConcurrent: 1,
+            minTime: 0
+        })
     }
 
     //Read the settings and start required services
     async initialize() {
         await this.paths.generateFilepaths();
+        this.ytDlpJsRuntime = new YtDlpJsRuntime(this.paths);
         this.settings = await Settings.loadFromFile(this.paths, this);
+        await this.downloadRecovery.initialize();
         this.changeMaxConcurrent(this.settings.maxConcurrent);
         if(this.settings.cookiePath != null) { //If the file does not exist anymore, null the value and save.
             fs.access(this.settings.cookiePath).catch(() => {
@@ -49,14 +62,32 @@ class Environment {
         await this.paths.validateDownloadPath();
     }
 
+    async getYtDlpRuntimeArgs() {
+        if(this.ytDlpJsRuntime == null) {
+            return [];
+        }
+        return this.ytDlpJsRuntime.getArguments();
+    }
+
     changeMaxConcurrent(max) {
+        const effectiveDownloadConcurrency = this.paths.isLikelySyncFolder(this.settings.downloadPath)
+            ? Math.min(max, 2)
+            : max;
         const settings = {
             trackDoneStatus: true,
-            maxConcurrent: max,
+            maxConcurrent: effectiveDownloadConcurrency,
             minTime: 0
         }
         this.downloadLimiter.updateSettings(settings);
-        this.metadataLimiter.updateSettings(settings);
+        this.metadataLimiter.updateSettings({
+            trackDoneStatus: true,
+            maxConcurrent: Math.min(max, 2),
+            minTime: 1000
+        });
+    }
+
+    async serializeFileOperation(operation) {
+        return await this.fileOperationLimiter.schedule(operation);
     }
 }
 module.exports = Environment;
