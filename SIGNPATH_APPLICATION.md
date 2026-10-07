@@ -16,10 +16,12 @@ This document provides the factual project summary for the SignPath Foundation a
 
 The project is actively maintained. Its Windows installer is built from the public source and build scripts in this repository. Release functionality and user instructions are documented in [README.md](README.md), release history in [CHANGELOG.md](CHANGELOG.md), and the release gate in [RELEASING.md](RELEASING.md).
 
-The public release requested by SignPath must be identified here before submitting the application:
+The public unsigned preview that demonstrates the Windows artifact requested for signing is:
 
-- Public release URL: **pending first GitHub prerelease**
+- Public release URL: <https://github.com/GTFreeBee/open-media-downloader-pro/releases/tag/preview-1.0.2-unsigned>
 - Unsigned installer filename: `Open Media Downloader Pro Setup 1.0.2.exe`
+
+The release is deliberately and prominently labelled unsigned. It is provided to satisfy SignPath's requirement that a project already be released in the form it wants signed; it is not represented as a trusted-publisher build.
 
 ## Upstream and independent maintenance
 
