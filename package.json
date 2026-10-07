@@ -1,0 +1,159 @@
+{
+  "name": "open-media-downloader-pro",
+  "version": "1.0.2",
+  "description": "Open Media Downloader Pro",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron . --dev --ozone-platform-hint=auto",
+    "clean": "node scripts/clean.js",
+    "build": "npm run clean && electron-builder --publish never",
+    "build:dir": "npm run clean && electron-builder --dir --win --x64 --publish never",
+    "build:win": "npm run clean && electron-builder --win nsis --x64 --publish never",
+    "build:linux": "npm run clean && electron-builder --linux AppImage --x64 --publish never",
+    "build:mac": "npm run clean && electron-builder --mac dmg --universal --publish never",
+    "lint": "eslint {**/modules/**/*.js,*.js} && eslint renderer/*.js",
+    "test": "jest --coverage",
+    "quick-test": "jest --runInBand && npm run lint",
+    "verify": "npm run lint && npm test -- --runInBand"
+  },
+  "jest": {
+    "collectCoverageFrom": [
+      "**/modules/**/*.js"
+    ],
+    "setupFilesAfterEnv": [
+      "<rootDir>/jest.setup.js"
+    ]
+  },
+  "keywords": [
+    "media-downloader",
+    "electron",
+    "download",
+    "video",
+    "audio",
+    "desktop"
+  ],
+  "author": "GlenTertainment",
+  "license": "AGPL-3.0-only",
+  "private": true,
+  "engines": {
+    "node": ">=22 <25"
+  },
+  "devDependencies": {
+    "electron": "^44.6.0",
+    "electron-builder": "^26.15.3",
+    "eslint": "^8.57.1",
+    "jest": "^30.5.2"
+  },
+  "dependencies": {
+    "adm-zip": "^0.6.1",
+    "axios": "^1.20.0",
+    "bootstrap": "^4.5.3",
+    "bootstrap-icons": "^1.3.0",
+    "bottleneck": "^2.19.5",
+    "dotenv": "^16.6.1",
+    "execa": "^5.1.1",
+    "iso-639-2": "^2.0.0",
+    "jquery": "^3.7.1",
+    "mkdirp": "^2.1.6",
+    "popper.js": "^1.16.1",
+    "sortablejs": "^1.15.7",
+    "windowbar": "^1.7.4"
+  },
+  "overrides": {
+    "brace-expansion@1.1.13": "1.1.21",
+    "js-yaml": "4.3.2"
+  },
+  "build": {
+    "afterPack": "./build/appimage-fix.js",
+    "appId": "com.glentertainment.open-media-downloader-pro",
+    "asarUnpack": "**/binaries/*",
+    "files": [
+      "**/*",
+      "!binaries/*",
+      "binaries/.create-folder-during-build",
+      "!binaries/downloads${/*}",
+      "!coverage${/*}",
+      "!dist${/*}",
+      "!tests${/*}",
+      "!taskList${/*}",
+      "!userSettings${/*}",
+      "!.github${/*}",
+      "!.git${/*}",
+      "!.env*",
+      "!.eslintrc.js",
+      "!renderer/.eslintrc.js",
+      "!jest.setup.js",
+      "!scripts${/*}",
+      "!build${/*}",
+      "!package-lock.json",
+      "!ytdlgui_demo.gif",
+      "!codecov.yaml",
+      "!node_modules/**/{test,tests,__tests__,docs,doc,example,examples}${/*}",
+      "!node_modules/**/*.map",
+      "!node_modules/**/*.md",
+      "!*.log",
+      "!*.bak",
+      "!*.backup",
+      "!*.tmp",
+      "!CONTRIBUTING.md",
+      "!RELEASING.md",
+      "!SECURITY.md",
+      "!SUPPORT.md",
+      "!CHANGELOG.md"
+    ],
+    "publish": [],
+    "appx": {
+      "backgroundColor": "#292929",
+      "displayName": "Open Media Downloader Pro",
+      "identityName": "3216GlenTertainment.OpenMediaDownloaderPro",
+      "publisher": "CN=EBDD6AA4-D72E-42C6-BBCB-A288476F0CBE",
+      "publisherDisplayName": "GlenTertainment",
+      "applicationId": "openmediadownloaderpro"
+    },
+    "nsis": {
+      "include": "./build/vcredist.nsh",
+      "packElevateHelper": false,
+      "artifactName": "${productName} Setup ${version}.${ext}",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false
+    },
+    "productName": "Open Media Downloader Pro",
+    "copyright": "Copyright © 2026 GlenTertainment",
+    "compression": "maximum",
+    "win": {
+      "target": "nsis",
+      "icon": "renderer/img/icon.ico"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        }
+      ],
+      "icon": "renderer/img/icon.icns",
+      "category": "public.app-category.utilities",
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "linux": {
+      "target": "AppImage",
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "executableName": "open-media-downloader-pro",
+      "icon": "renderer/img/icon.png",
+      "synopsis": "A cross-platform desktop media downloader",
+      "category": "X-utility",
+      "desktop": {
+        "entry": {
+          "Name": "Open Media Downloader Pro",
+          "Icon": "open-media-downloader-pro",
+          "Comment": "A cross-platform desktop media downloader"
+        }
+      }
+    }
+  }
+}
