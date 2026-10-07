@@ -13,3 +13,5 @@ Reports will be acknowledged as soon as practical. A fix, advisory and credited 
 ## Release integrity
 
 Release assets include SHA-256 checksums. Managed executable downloads are accepted only over HTTPS from allowlisted hosts and promoted only after their SHA-256 digest matches trusted release metadata or the pinned FFmpeg manifest.
+
+Windows release signing follows [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md). A checksum detects an altered download but does not replace a valid Authenticode signature.

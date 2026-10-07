@@ -111,7 +111,6 @@
       "applicationId": "openmediadownloaderpro"
     },
     "nsis": {
-      "include": "./build/vcredist.nsh",
       "packElevateHelper": false,
       "artifactName": "${productName} Setup ${version}.${ext}",
       "oneClick": false,

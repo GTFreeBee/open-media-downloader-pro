@@ -36,6 +36,12 @@ Only download media you are legally allowed to access and retain. Website terms 
 
 The application has no project-owned analytics or advertising. URLs are sent to the selected sites and to the underlying media tools as required to inspect and download content. See [PRIVACY.md](PRIVACY.md) for details.
 
+## Code signing policy
+
+Windows release signing is being prepared through [SignPath.io](https://about.signpath.io/), with a certificate provided by the [SignPath Foundation](https://signpath.org/). Until that service has approved this project and a release has passed the signing workflow, installers remain unsigned and are described as such.
+
+The complete policy, team roles, privacy statement and release controls are documented in [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md).
+
 ## Supported systems
 
 Release builds target current 64-bit Windows, macOS and Linux systems. Windows receives the most direct testing. Some sites require a current JavaScript runtime, cookies or account access supplied by the user.
@@ -66,6 +72,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for review requirements and [RELEASING.md
 
 ## Credits and licensing
 
-This project is based on [StefanLobbenmeier/youtube-dl-gui](https://github.com/StefanLobbenmeier/youtube-dl-gui), which derives from [jely2002/youtube-dl-gui](https://github.com/jely2002/youtube-dl-gui).
+This project is an independently maintained downstream fork of [StefanLobbenmeier/youtube-dl-gui](https://github.com/StefanLobbenmeier/youtube-dl-gui), which derives from [jely2002/youtube-dl-gui](https://github.com/jely2002/youtube-dl-gui). Its Git history remains based on upstream release `v2.5.6`, and `upstream` is retained as a read-only Git remote. See [UPSTREAM.md](UPSTREAM.md) for provenance, the divergence policy and a summary of the independently maintained changes.
 
 The application source is licensed under [AGPL-3.0-only](LICENSE). Components downloaded or redistributed by the application retain their own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

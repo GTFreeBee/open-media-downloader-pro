@@ -4,7 +4,9 @@ All notable changes to this project are documented here.
 
 ## Unreleased
 
-No changes yet.
+- Documentation: Made the independently maintained downstream-fork relationship, preserved upstream ancestry and substantial product divergence explicit.
+- Release engineering: Added the SignPath code-signing policy, application dossier and a manually approved GitHub trusted-build workflow for Windows installers.
+- Packaging: Removed the inherited Visual C++ 2010 bootstrapper and unsigned elevation helper from the installer; the current Electron application is self-contained and no longer needs that legacy installation step.
 
 ## 1.0.2 — 2026-10-07
 

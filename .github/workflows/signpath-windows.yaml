@@ -1,0 +1,83 @@
+name: SignPath Windows release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: signpath-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify-and-build:
+    if: startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.package.outputs.version }}
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run verify
+      - run: npm audit --omit=dev --audit-level=high
+      - id: package
+        shell: pwsh
+        run: |
+          "version=$((Get-Content package.json | ConvertFrom-Json).version)" >> $env:GITHUB_OUTPUT
+      - run: npm run build:win
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - id: upload
+        name: Upload unsigned installer for origin verification
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: unsigned-windows-installer-${{ steps.package.outputs.version }}
+          path: dist/Open Media Downloader Pro Setup ${{ steps.package.outputs.version }}.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  sign:
+    needs: verify-and-build
+    runs-on: ubuntu-latest
+    environment: signpath-release
+    steps:
+      - name: Confirm SignPath repository configuration
+        env:
+          API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          POLICY_SLUG: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          ARTIFACT_CONFIGURATION_SLUG: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+        shell: bash
+        run: |
+          test -n "$API_TOKEN"
+          test -n "$ORGANIZATION_ID"
+          test -n "$PROJECT_SLUG"
+          test -n "$POLICY_SLUG"
+          test -n "$ARTIFACT_CONFIGURATION_SLUG"
+      - name: Submit signing request
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ needs.verify-and-build.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+          parameters: |
+            version: ${{ toJSON(needs.verify-and-build.outputs.version) }}
+      - name: Upload signed installer for release verification
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: signed-windows-installer-${{ needs.verify-and-build.outputs.version }}
+          path: signed/**
+          if-no-files-found: error
+          retention-days: 14
