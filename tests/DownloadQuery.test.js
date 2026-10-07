@@ -38,13 +38,13 @@ describe("DownloadQuery resilience", () => {
     it("stores yt-dlp temp files in app-managed storage", () => {
         const { instance } = buildInstance({ avoidDuplicates: false });
 
-        const args = instance.buildArguments("C:\\downloads");
+        const downloadFolder = path.join(os.tmpdir(), "omdp-downloads");
+        const args = instance.buildArguments(downloadFolder);
         expect(args).toContain("--paths");
         const tempPath = args[args.indexOf("--paths") + 1];
-        expect(tempPath).toContain("temp:C:\\app-data\\download-staging\\");
-        expect(tempPath).toContain("\\temp");
+        expect(tempPath).toBe(`temp:${instance.getTemporaryDownloadFolder()}`);
         expect(path.isAbsolute(args[args.indexOf("-o") + 1])).toBe(false);
-        expect(args).toContain("home:C:\\downloads");
+        expect(args).toContain(`home:${path.resolve(downloadFolder)}`);
         expect(args).toContain("after_move:__OMDP_FILE__%(filepath)j");
     });
 
@@ -56,7 +56,7 @@ describe("DownloadQuery resilience", () => {
         const firstOutput = firstArgs[firstArgs.indexOf("-o") + 1];
         const secondOutput = secondArgs[secondArgs.indexOf("-o") + 1];
 
-        expect(firstArgs).toContain(`home:${instance.getResilientDownloadFolder()}`);
+        expect(firstArgs).toContain(`home:${path.resolve(instance.getResilientDownloadFolder())}`);
         expect(path.isAbsolute(firstOutput)).toBe(false);
         expect(firstOutput).toEqual(secondOutput);
     });
@@ -158,7 +158,11 @@ describe("completed file verification", () => {
     });
 });
 
-function buildInstance({ avoidDuplicates, appDataPath = "C:\\app-data", downloadPath = "C:\\downloads" }) {
+function buildInstance({
+    avoidDuplicates,
+    appDataPath = path.join(os.tmpdir(), "omdp-app-data"),
+    downloadPath = path.join(os.tmpdir(), "omdp-downloads")
+}) {
     const progressBar = {
         setInitial: jest.fn(),
         reset: jest.fn(),
