@@ -39,9 +39,9 @@
     "node": ">=22 <25"
   },
   "devDependencies": {
-    "electron": "^44.6.0",
-    "electron-builder": "^26.15.3",
-    "eslint": "^8.57.1",
+    "electron": "^45.0.0",
+    "electron-builder": "^26.18.0",
+    "eslint": "^10.13.0",
     "jest": "^30.5.2"
   },
   "dependencies": {
